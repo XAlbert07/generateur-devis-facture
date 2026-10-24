@@ -1,0 +1,9 @@
+{
+  "name": "generateur-devis-facture-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix .. run dev:api",
+    "typecheck": "npm --prefix .. run typecheck"
+  }
+}

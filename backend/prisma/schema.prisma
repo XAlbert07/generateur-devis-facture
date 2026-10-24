@@ -1,0 +1,311 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMINISTRATEUR
+  GESTIONNAIRE
+  COMPTABLE
+  LECTEUR
+}
+
+enum QuoteStatus {
+  BROUILLON
+  ENVOYE
+  ACCEPTE
+  REFUSE
+  EXPIRE
+  CONVERTI
+  ANNULE
+}
+
+enum InvoiceStatus {
+  BROUILLON
+  EMISE
+  ANNULEE
+}
+
+enum InvoiceOrigin {
+  MANUELLE
+  DEVIS
+}
+
+enum DiscountType {
+  POURCENTAGE
+  MONTANT_FIXE
+}
+
+enum DocumentType {
+  DEVIS
+  FACTURE
+}
+
+enum PaymentMethod {
+  VIREMENT
+  ESPECES
+  CHEQUE
+  MOBILE_MONEY
+  CARTE
+  AUTRE
+}
+
+model User {
+  id           String              @id @default(uuid()) @db.Uuid
+  name         String
+  email        String              @unique
+  passwordHash String              @map("password_hash")
+  mustChangePassword Boolean       @default(false) @map("doit_changer_mot_de_passe")
+  lastLoginAt       DateTime?      @map("derniere_connexion") @db.Timestamptz(6)
+  memberships  CompanyMembership[]
+  paymentsCreated   Payment[]           @relation("PaymentCreator")
+  paymentsCancelled Payment[]           @relation("PaymentCanceller")
+  invoicesCancelled Invoice[]           @relation("InvoiceCanceller")
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("utilisateur")
+}
+
+model Company {
+  id                String              @id @default(uuid()) @db.Uuid
+  name              String
+  address           String?             @map("adresse")
+  phone             String?             @map("telephone")
+  email             String?
+  taxIdentifiers    Json?               @map("identifiants_fiscaux")
+  logoReference    String?             @map("logo_reference")
+  logoHash         String?             @map("logo_hash") @db.Char(64)
+  currency          String              @default("XOF") @db.Char(3)
+  decimals          Int                 @default(0)
+  defaultTaxRateBasisPts Int             @default(0) @map("taux_tva_defaut_bp")
+  timezone          String              @default("Africa/Ouagadougou")
+  quotePrefix       String              @default("DEV") @map("prefixe_devis")
+  invoicePrefix     String              @default("FAC") @map("prefixe_facture")
+  paymentDelayDays  Int                 @default(30) @map("delai_paiement_jours")
+  legalMentions     String?             @map("mentions_legales")
+  footerText        String?             @map("pied_de_page_pdf")
+  paymentTerms      String?             @map("conditions_paiement")
+  paymentDetails    Json?               @map("coordonnees_reglement")
+  version           Int                 @default(1)
+  memberships       CompanyMembership[]
+  clients           Client[]
+  products          Product[]
+  quotes            Quote[]
+  invoices          Invoice[]
+  documentSequences DocumentSequence[]
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("entreprise")
+}
+
+model CompanyMembership {
+  id        String  @id @default(uuid()) @db.Uuid
+  userId    String  @map("utilisateur_id") @db.Uuid
+  companyId String  @map("entreprise_id") @db.Uuid
+  role      Role    @default(ADMINISTRATEUR)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, companyId])
+  @@map("membre_entreprise")
+}
+
+model Client {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("entreprise_id") @db.Uuid
+  name          String
+  email         String?
+  phone         String?
+  address       String?
+  taxIdentifier String?   @map("identifiant_fiscal")
+  archivedAt    DateTime? @map("archived_at") @db.Timestamptz(6)
+  version       Int       @default(1)
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  quotes        Quote[]
+  invoices      Invoice[]
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([companyId, name])
+  @@map("client")
+}
+
+model Product {
+  id              String    @id @default(uuid()) @db.Uuid
+  companyId       String    @map("entreprise_id") @db.Uuid
+  name            String
+  description     String?
+  unitPrice       BigInt    @map("prix_unitaire")
+  unit            String    @default("unité") @map("unite")
+  taxRateBasisPts Int       @default(0) @map("taux_tva_bp")
+  archivedAt      DateTime? @map("archived_at") @db.Timestamptz(6)
+  version         Int       @default(1)
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([companyId, name])
+  @@map("produit")
+}
+
+model Quote {
+  id                  String        @id @default(uuid()) @db.Uuid
+  companyId           String        @map("entreprise_id") @db.Uuid
+  clientId            String?       @map("client_id") @db.Uuid
+  number              String?
+  status              QuoteStatus   @default(BROUILLON)
+  validUntil          DateTime?     @map("date_validite") @db.Date
+  currency            String        @db.Char(3)
+  globalDiscountType  DiscountType? @map("remise_globale_type")
+  globalDiscountValue BigInt?       @map("remise_globale_valeur")
+  subtotalExclTax     BigInt        @default(0) @map("sous_total_ht")
+  globalDiscount      BigInt        @default(0) @map("remise_globale")
+  totalExclTax        BigInt        @default(0) @map("total_ht_apres_remise")
+  totalTax            BigInt        @default(0) @map("total_tva")
+  totalInclTax        BigInt        @default(0) @map("total_ttc")
+  taxBreakdown        Json?         @map("ventilation_tva")
+  sentAt              DateTime?     @map("envoye_le") @db.Timestamptz(6)
+  acceptanceDate      DateTime?     @map("date_acceptation") @db.Date
+  snapshot            Json?
+  snapshotVersion     Int?          @map("snapshot_version")
+  snapshotHash        String?       @map("hash_snapshot")
+  pdfReference        String?       @map("pdf_reference")
+  pdfHash             String?       @map("hash_pdf") @db.Char(64)
+  version             Int           @default(1)
+  company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  client              Client?       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  lines               QuoteLine[]
+  invoice             Invoice?
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+  @@index([companyId, clientId])
+  @@map("devis")
+}
+
+model QuoteLine {
+  id              String        @id @default(uuid()) @db.Uuid
+  quoteId         String        @map("devis_id") @db.Uuid
+  position        Int
+  description     String        @map("designation")
+  quantityMilli   BigInt        @map("quantite_milli")
+  unitPrice       BigInt        @map("prix_unitaire")
+  discountType    DiscountType? @map("remise_type")
+  discountValue   BigInt?       @map("remise_valeur")
+  taxRateBasisPts Int           @map("taux_tva_bp")
+  gross           BigInt
+  discount        BigInt
+  net             BigInt
+  quote           Quote         @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@unique([quoteId, position])
+  @@map("ligne_devis")
+}
+
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("entreprise_id") @db.Uuid
+  clientId        String?       @map("client_id") @db.Uuid
+  quoteId         String?       @unique @map("devis_id") @db.Uuid
+  number          String?
+  status          InvoiceStatus @default(BROUILLON)
+  origin          InvoiceOrigin @default(MANUELLE)
+  issueDate       DateTime?     @map("date_emission") @db.Date
+  dueDate         DateTime?     @map("date_echeance") @db.Date
+  currency        String        @db.Char(3)
+  subtotalExclTax BigInt        @default(0) @map("sous_total_ht")
+  globalDiscountType DiscountType? @map("remise_globale_type")
+  globalDiscountValue BigInt?      @map("remise_globale_valeur")
+  globalDiscount  BigInt        @default(0) @map("remise_globale")
+  totalExclTax    BigInt        @default(0) @map("total_ht_apres_remise")
+  totalTax        BigInt        @default(0) @map("total_tva")
+  totalInclTax    BigInt        @default(0) @map("total_ttc")
+  taxBreakdown    Json?         @map("ventilation_tva")
+  snapshot        Json?
+  snapshotVersion Int?          @map("snapshot_version")
+  snapshotHash    String?       @map("hash_snapshot")
+  pdfReference    String?       @map("pdf_reference")
+  pdfHash         String?       @map("hash_pdf") @db.Char(64)
+  cancellationPdf String?       @map("pdf_annulation_reference")
+  cancellationPdfHash String?   @map("hash_pdf_annulation") @db.Char(64)
+  cancelledAt     DateTime?     @map("annule_le") @db.Timestamptz(6)
+  cancelledByUserId String?    @map("annule_par") @db.Uuid
+  cancellationReason String?    @map("motif_annulation")
+  version         Int           @default(1)
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  client          Client?       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  quote           Quote?        @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  cancelledBy     User?         @relation("InvoiceCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  lines           InvoiceLine[]
+  payments        Payment[]
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([companyId, number])
+  @@index([companyId, status])
+  @@index([companyId, clientId])
+  @@index([companyId, issueDate])
+  @@map("facture")
+}
+
+model InvoiceLine {
+  id              String        @id @default(uuid()) @db.Uuid
+  invoiceId       String        @map("facture_id") @db.Uuid
+  position        Int
+  description     String        @map("designation")
+  quantityMilli   BigInt        @map("quantite_milli")
+  unitPrice       BigInt        @map("prix_unitaire")
+  discountType    DiscountType? @map("remise_type")
+  discountValue   BigInt?       @map("remise_valeur")
+  taxRateBasisPts Int           @map("taux_tva_bp")
+  gross           BigInt
+  discount        BigInt
+  net             BigInt
+  invoice         Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([invoiceId, position])
+  @@map("ligne_facture")
+}
+
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  invoiceId         String        @map("facture_id") @db.Uuid
+  amount            BigInt
+  paymentDate       DateTime      @map("date_paiement") @db.Date
+  method            PaymentMethod
+  reference         String?
+  idempotencyKey    String        @map("cle_idempotence")
+  requestHash       String        @map("empreinte_requete") @db.Char(64)
+  idempotencyExpiresAt DateTime   @map("cle_idempotence_expire_le") @db.Timestamptz(6)
+  createdByUserId   String        @map("cree_par") @db.Uuid
+  cancelledAt       DateTime?     @map("annule_le") @db.Timestamptz(6)
+  cancelledByUserId String?       @map("annule_par") @db.Uuid
+  cancellationReason String?      @map("motif_annulation")
+  invoice           Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  createdBy         User          @relation("PaymentCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  cancelledBy       User?         @relation("PaymentCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([invoiceId, idempotencyKey, idempotencyExpiresAt])
+  @@index([invoiceId, paymentDate])
+  @@map("paiement")
+}
+
+model DocumentSequence {
+  companyId  String       @map("entreprise_id") @db.Uuid
+  type       DocumentType
+  year       Int          @map("annee")
+  lastNumber Int          @default(0) @map("dernier_numero")
+  company    Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@id([companyId, type, year])
+  @@map("sequence_document")
+}

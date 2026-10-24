@@ -1,0 +1,9 @@
+{
+  "name": "generateur-devis-facture-web",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix .. run dev:web",
+    "build": "npm --prefix .. run build:web",
+    "typecheck": "npm --prefix .. run typecheck:web"
+  }
+}

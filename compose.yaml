@@ -1,0 +1,20 @@
+services:
+  database:
+    image: postgres:16-alpine
+    container_name: devis-facture-postgres
+    environment:
+      POSTGRES_DB: devis_facture
+      POSTGRES_USER: devis
+      POSTGRES_PASSWORD: devis_local
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devis -d devis_facture"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
