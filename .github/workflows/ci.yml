@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: devis_facture_test
+          POSTGRES_USER: devis
+          POSTGRES_PASSWORD: devis_local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devis -d devis_facture_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://devis:devis_local@localhost:5432/devis_facture_test?schema=public
+      JWT_SECRET: ci-test-secret-at-least-thirty-two-chars
+      RUN_POSTGRES_INTEGRATION: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:deps
+      - run: npm run db:generate
+      - run: npx prisma migrate deploy --schema backend/prisma/schema.prisma
+      - run: npm run typecheck
+      - run: npm run typecheck:web
+      - run: npm test
+      - run: npm run test:integration

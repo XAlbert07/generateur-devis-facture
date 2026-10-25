@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuthentication } from '../auth/authenticate.js';
 import { prismaForCompany } from '../db/company-prisma.js';
+import { problem } from '../http/problem.js';
 
 const identifier = z.string().uuid();
 const amount = z.string().regex(/^\d+$/, 'Le montant doit être une chaîne entière positive.').transform((value) => BigInt(value));
@@ -26,10 +27,6 @@ function versionFrom(request: Request): number | undefined {
 
 function withVersion(response: Response, version: number): void {
   response.setHeader('ETag', `"${version}"`);
-}
-
-function problem(response: Response, status: number, title: string, errors?: unknown): void {
-  response.status(status).type('application/problem+json').json({ title, status, ...(errors ? { errors } : {}) });
 }
 
 export const productsRouter = Router();
@@ -73,10 +70,12 @@ productsRouter.put('/:id', async (request: Request, response: Response) => {
   if (!input.success) return problem(response, 422, 'Données invalides', input.error.flatten().fieldErrors);
   if (!version) return problem(response, 428, 'En-tête If-Match requis');
   const db = prismaForCompany(request.auth!.companyId);
+  const existing = await db.product.findUnique({ where: { id: id.data }, select: { id: true } });
+  if (!existing) return problem(response, 404, 'Produit ou service introuvable');
   const changed = await db.product.updateMany({
     where: { id: id.data, version }, data: { ...input.data, version: { increment: 1 } } as never,
   });
-  if (!changed.count) return problem(response, 409, 'Produit modifié ou introuvable');
+  if (!changed.count) return problem(response, 409, 'Produit modifié concurrentement');
   const product = await db.product.findUniqueOrThrow({ where: { id: id.data } });
   withVersion(response, product.version);
   response.json(product);
@@ -87,9 +86,12 @@ productsRouter.post('/:id/archive', async (request: Request, response: Response)
   const version = versionFrom(request);
   if (!id.success) return problem(response, 404, 'Produit ou service introuvable');
   if (!version) return problem(response, 428, 'En-tête If-Match requis');
-  const changed = await prismaForCompany(request.auth!.companyId).product.updateMany({
+  const db = prismaForCompany(request.auth!.companyId);
+  const existing = await db.product.findUnique({ where: { id: id.data }, select: { id: true } });
+  if (!existing) return problem(response, 404, 'Produit ou service introuvable');
+  const changed = await db.product.updateMany({
     where: { id: id.data, version, archivedAt: null }, data: { archivedAt: new Date(), version: { increment: 1 } },
   });
-  if (!changed.count) return problem(response, 409, 'Produit modifié, archivé ou introuvable');
+  if (!changed.count) return problem(response, 409, 'Produit modifié ou déjà archivé');
   response.status(204).send();
 });

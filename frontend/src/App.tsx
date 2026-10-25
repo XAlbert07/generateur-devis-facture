@@ -1,6 +1,6 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router';
 import { AuthProvider, useAuth } from './auth/auth-context';
-import { LoginPage, RegisterPage } from './auth/auth-pages';
+import { ChangePasswordPage, LoginPage, RegisterPage } from './auth/auth-pages';
 import { DashboardPage } from './dashboard/dashboard-page';
 import { AppLayout } from './layout/app-layout';
 import { ClientPage } from './clients/client-page';
@@ -16,12 +16,14 @@ export function App() {
 function AppRoutes() {
   const { session, loading, error } = useAuth();
   if (loading) return <div className="boot-screen"><span className="brand-mark">D</span><p>Chargement de votre espace…</p></div>;
+  const mustChange = Boolean(session?.user.mustChangePassword);
   return <>
     {error && <div className="connection-banner" role="status">{error} Vérifiez que l’API est démarrée.</div>}
     <Routes>
-      <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/login" element={session ? <Navigate to={mustChange ? '/changer-mot-de-passe' : '/'} replace /> : <LoginPage />} />
       <Route path="/register" element={session ? <Navigate to="/" replace /> : <RegisterPage />} />
-      <Route element={session ? <Outlet /> : <Navigate to="/login" replace />}>
+      <Route path="/changer-mot-de-passe" element={session ? <ChangePasswordPage /> : <Navigate to="/login" replace />} />
+      <Route element={session ? (mustChange ? <Navigate to="/changer-mot-de-passe" replace /> : <Outlet />) : <Navigate to="/login" replace />}>
         <Route element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="clients" element={<ClientPage />} />
@@ -31,7 +33,7 @@ function AppRoutes() {
           <Route path="entreprise" element={<CompanyPage />} />
         </Route>
       </Route>
-      <Route path="*" element={<Navigate to={session ? '/' : '/login'} replace />} />
+      <Route path="*" element={<Navigate to={session ? (mustChange ? '/changer-mot-de-passe' : '/') : '/login'} replace />} />
     </Routes>
   </>;
 }

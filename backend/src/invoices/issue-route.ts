@@ -2,7 +2,8 @@ import type { Request, Response } from 'express';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { hashSnapshot } from '../../../shared/documents/snapshot.js';
-import { addDateOnlyDays, startOfCompanyDay } from '../../../shared/documents/date-only.js';
+import { addDateOnlyDays, companyCalendarYear, startOfCompanyDay } from '../../../shared/documents/date-only.js';
+import { recordAudit } from '../audit/record.js';
 import { renderDocumentPdf } from '../quotes/pdf.js';
 import { hashPdf, readInvoicePdf, saveInvoicePdf } from '../quotes/pdf-storage.js';
 import { invoiceIdFrom, problem, versionFrom, withVersion } from './common.js';
@@ -26,13 +27,18 @@ export async function issueInvoice(request: Request, response: Response): Promis
   const result = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "facture" WHERE "id" = ${invoiceId}::uuid AND "entreprise_id" = ${companyId}::uuid FOR UPDATE`;
     const current = await tx.invoice.findFirst({ where: { id: invoiceId, companyId }, include: issueInclude });
-    if (!current) return null;
-    if (current.status === 'EMISE') return { invoice: current, newlyIssued: false };
-    if (current.status !== 'BROUILLON' || current.version !== version) return null;
+    if (!current) return { kind: 'conflict' as const };
+    if (current.status === 'EMISE') return { kind: 'ok' as const, invoice: current, newlyIssued: false };
+    if (current.status !== 'BROUILLON' || current.version !== version) return { kind: 'conflict' as const };
+    if (!current.clientId || !current.client) return { kind: 'missing-client' as const };
+    const activeClient = await tx.client.findFirst({
+      where: { id: current.clientId, companyId, archivedAt: null }, select: { id: true },
+    });
+    if (!activeClient) return { kind: 'missing-client' as const };
 
     const issueDate = startOfCompanyDay(current.company.timezone);
     const dueDate = addDateOnlyDays(issueDate, current.company.paymentDelayDays);
-    const year = issueDate.getUTCFullYear();
+    const year = companyCalendarYear(current.company.timezone, issueDate);
     const sequence = await tx.documentSequence.upsert({
       where: { companyId_type_year: { companyId, type: 'FACTURE', year } },
       create: { companyId, type: 'FACTURE', year, lastNumber: 1 },
@@ -55,11 +61,12 @@ export async function issueInvoice(request: Request, response: Response): Promis
       snapshot: snapshot as never, snapshotVersion: 1, snapshotHash: hashSnapshot(snapshot),
       version: { increment: 1 },
     } });
-    if (!changed.count) return null;
-    return { invoice: await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } }), newlyIssued: true };
+    if (!changed.count) return { kind: 'conflict' as const };
+    return { kind: 'ok' as const, invoice: await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } }), newlyIssued: true };
   });
 
-  if (!result) return problem(response, 409, 'Facture non brouillon, version obsolète ou introuvable');
+  if (result.kind === 'missing-client') return problem(response, 422, 'Un client actif est obligatoire pour émettre la facture');
+  if (result.kind === 'conflict') return problem(response, 409, 'Facture non brouillon, version obsolète ou introuvable');
   if (result.newlyIssued) {
     try {
       const bytes = await renderDocumentPdf(result.invoice.snapshot);
@@ -70,6 +77,12 @@ export async function issueInvoice(request: Request, response: Response): Promis
       console.error('PDF de la facture indisponible après émission', error);
     }
   }
+  if (result.newlyIssued) {
+    await recordAudit(request, {
+      action: 'invoice.issue', companyId, userId: request.auth!.userId,
+      resource: 'invoice', resourceId: invoiceId, metadata: { number: result.invoice.number },
+    });
+  }
   const invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, companyId }, include: { lines: { orderBy: { position: 'asc' } } } });
   if (!invoice) return problem(response, 500, 'Facture émise introuvable');
   withVersion(response, invoice.version);
@@ -79,6 +92,24 @@ export async function issueInvoice(request: Request, response: Response): Promis
 export async function getInvoicePdf(request: Request, response: Response): Promise<void> {
   const invoiceId = invoiceIdFrom(request, response); if (!invoiceId) return;
   const companyId = request.auth!.companyId;
+  const draft = await prisma.invoice.findFirst({
+    where: { id: invoiceId, companyId, status: 'BROUILLON' },
+    include: issueInclude,
+  });
+  if (draft) {
+    const { company, client, ...document } = draft;
+    const live = {
+      version: 1, documentType: 'FACTURE' as const,
+      document: { ...document, number: document.number ?? 'BROUILLON', status: 'BROUILLON' },
+      company, client,
+    };
+    const bytes = await renderDocumentPdf(live, { draft: true });
+    response.status(200).type('application/pdf')
+      .setHeader('Content-Disposition', `inline; filename="facture-${invoiceId}-brouillon.pdf"`)
+      .setHeader('Cache-Control', 'no-store')
+      .send(bytes);
+    return;
+  }
   const invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, companyId }, select: {
     id: true, status: true, snapshot: true, snapshotHash: true, pdfHash: true,
   } });

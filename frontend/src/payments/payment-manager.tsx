@@ -48,7 +48,10 @@ export function PaymentManager({ invoiceId, invoiceNumber, company, onClose, onC
         {!payment.cancelledAt && <button className="text-button danger-button" onClick={() => setCancelTarget(payment)}>Annuler le paiement</button>}
       </article>) : <p className="accepted-empty">Aucun paiement enregistré.</p>}
     </section>
-    {!paymentKey ? <button className="button-primary payment-add" disabled={list.summary.balance === '0'} onClick={openPaymentForm}>＋ Enregistrer un paiement</button> : <form className="resource-form payment-form" onSubmit={submit} noValidate>
+    {!paymentKey ? (list.summary.balance === '0'
+      ? <p className="accepted-empty">La facture est intégralement réglée. Aucun paiement supplémentaire n'est possible.</p>
+      : <button className="button-primary payment-add" onClick={openPaymentForm}>＋ Enregistrer un paiement</button>
+    ) : <form className="resource-form payment-form" onSubmit={submit} noValidate>
       <h3>Nouveau paiement</h3><label className="form-field"><span>Montant ({company.currency})</span><input inputMode="decimal" {...register('amount')} aria-invalid={Boolean(errors.amount)} />{errors.amount && <small className="field-error">{errors.amount.message}</small>}</label>
       <div className="form-columns"><label className="form-field"><span>Date de paiement</span><input type="date" {...register('paymentDate')} aria-invalid={Boolean(errors.paymentDate)} />{errors.paymentDate && <small className="field-error">{errors.paymentDate.message}</small>}</label>
         <label className="form-field"><span>Mode de paiement</span><select {...register('method')}>{methods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label></div>

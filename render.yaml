@@ -1,0 +1,30 @@
+# API Express hébergée sur Render. PostgreSQL est hébergé chez Neon (plan gratuit permanent) :
+# l'adresse de connexion se saisit dans le dashboard Render (variable sync: false),
+# jamais dans ce fichier.
+services:
+  - type: web
+    name: devis-facture-api
+    runtime: node
+    plan: free
+    # Les outils de build (Prisma, tsx) sont des dépendances de développement :
+    # --include=dev est nécessaire car NODE_ENV=production exclut ces dépendances par défaut.
+    buildCommand: npm ci --include=dev && npm run db:generate
+    # Applique les migrations Prisma puis démarre l'API (voir package.json).
+    startCommand: npm run start:render
+    # Sonde sans accès à la base : n'empêche pas Neon de se mettre en veille.
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      # Cookies Secure et en-tête HSTS
+      - key: NODE_ENV
+        value: production
+      # postgresql://UTILISATEUR:MOT_DE_PASSE@HÔTE/NOM_BASE?sslmode=require&connect_timeout=15&schema=public
+      # Utiliser l'hôte DIRECT de Neon (sans « -pooler ») : les migrations Prisma l'exigent.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      # Le disque de Render gratuit est éphémère : PDF et logos vont dans PostgreSQL.
+      - key: DOCUMENTS_STORAGE
+        value: database

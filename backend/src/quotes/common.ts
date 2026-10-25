@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
+import { problem } from '../http/problem.js';
 
 const integer = z.string().regex(/^\d+$/, 'La valeur doit être une chaîne entière positive.').transform(BigInt);
 const discount = z.object({
@@ -10,6 +11,7 @@ const discount = z.object({
 export const quoteInput = z.object({
   clientId: z.string().uuid().nullable().optional(),
   validUntil: z.string().date().nullable().optional(),
+  notes: z.string().trim().max(10_000).nullable().optional(),
   globalDiscount: discount,
   lines: z.array(z.object({
     description: z.string().trim().min(1).max(2_000),
@@ -24,6 +26,7 @@ export const listInput = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(['BROUILLON', 'ENVOYE', 'ACCEPTE', 'REFUSE', 'EXPIRE', 'CONVERTI', 'ANNULE']).optional(),
+  search: z.string().trim().max(160).optional(),
 });
 
 export function versionFrom(request: Request): number | undefined {
@@ -46,6 +49,4 @@ export function withVersion(response: Response, version: number): void {
   response.setHeader('ETag', `"${version}"`);
 }
 
-export function problem(response: Response, status: number, title: string, errors?: unknown): void {
-  response.status(status).type('application/problem+json').json({ title, status, ...(errors === undefined ? {} : { errors }) });
-}
+export { problem } from '../http/problem.js';

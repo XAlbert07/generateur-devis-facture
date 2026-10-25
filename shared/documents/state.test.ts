@@ -9,11 +9,15 @@ describe('machine à états du devis', () => {
     expect(applyQuoteAction('accepted', 'convert')).toBe('converted');
   });
 
-  it('bloque une transition terminale', () => {
+  it('bloque une transition terminale et n’écrit plus expire', () => {
     expect(canApplyQuoteAction('converted', 'send')).toBe(false);
     expect(() => applyQuoteAction('refused', 'accept')).toThrow(RangeError);
-    expect(applyQuoteAction('sent', 'expire')).toBe('expired');
+    expect(canApplyQuoteAction('sent', 'expire' as never)).toBe(false);
+    expect(() => applyQuoteAction('sent', 'expire' as never)).toThrow(RangeError);
+    // Legacy « expired » : refus / annulation encore possibles côté machine.
     expect(canApplyQuoteAction('expired', 'accept')).toBe(false);
+    expect(canApplyQuoteAction('expired', 'refuse')).toBe(true);
+    expect(canApplyQuoteAction('expired', 'cancel')).toBe(true);
   });
 });
 

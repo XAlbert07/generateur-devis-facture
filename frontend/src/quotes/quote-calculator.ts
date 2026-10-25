@@ -41,6 +41,6 @@ export function calculateQuoteForm(values: QuoteFormValues, decimals: number) {
   const totals = computeDocumentTotals(lines.map((line) => line.money), global.money);
   return {
     totals,
-    payload: { clientId: values.clientId || null, validUntil: values.validUntil || null, globalDiscount: global.api, lines: lines.map((line) => line.api) },
+    payload: { clientId: values.clientId || null, validUntil: values.validUntil || null, notes: values.notes?.trim() || null, globalDiscount: global.api, lines: lines.map((line) => line.api) },
   };
 }

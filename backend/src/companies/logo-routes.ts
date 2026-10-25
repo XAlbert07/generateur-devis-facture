@@ -2,15 +2,12 @@ import type { Request, Response } from 'express';
 import express, { Router } from 'express';
 import sharp from 'sharp';
 import { prisma } from '../db/prisma.js';
+import { problem } from '../http/problem.js';
 import { readCompanyLogo, saveCompanyLogo } from './logo-storage.js';
 
 const logoInput = express.raw({ type: ['image/png', 'image/jpeg'], limit: '2mb' });
 const pixelLimit = 20_000_000;
 const outputLimit = 1_000_000;
-
-function problem(response: Response, status: number, title: string) {
-  response.status(status).type('application/problem+json').json({ title, status });
-}
 
 function versionFrom(request: Request): number | undefined {
   const value = Number(request.header('if-match')?.replaceAll('"', ''));

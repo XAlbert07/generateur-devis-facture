@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { hashSnapshot } from '../../../shared/documents/snapshot.js';
+import { recordAudit } from '../audit/record.js';
 import { renderDocumentPdf } from '../quotes/pdf.js';
 import { hashPdf, readCancellationPdf, saveCancellationPdf } from '../quotes/pdf-storage.js';
 import { invoiceIdFrom, problem, versionFrom, withVersion } from './common.js';
@@ -63,6 +64,12 @@ export async function cancelInvoice(request: Request, response: Response): Promi
 
   const invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, companyId } });
   if (!invoice) return problem(response, 500, 'Facture annulée introuvable');
+  if (result.kind === 'cancelled') {
+    await recordAudit(request, {
+      action: 'invoice.cancel', companyId, userId,
+      resource: 'invoice', resourceId: invoiceId,
+    });
+  }
   withVersion(response, invoice.version);
   response.json(invoice);
 }

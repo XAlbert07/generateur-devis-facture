@@ -1,18 +1,16 @@
 import type { NextFunction, Request, Response } from 'express';
+import { prisma } from '../db/prisma.js';
+import { problem } from '../http/problem.js';
+import { readCookie } from './cookies.js';
 import { verifyAccessToken, type AccessTokenPayload } from './tokens.js';
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       auth?: AccessTokenPayload;
     }
   }
-}
-
-function readCookie(request: Request, name: string): string | undefined {
-  const cookie = request.headers.cookie;
-  if (!cookie) return undefined;
-  return cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 function readAccessToken(request: Request): string | undefined {
@@ -21,16 +19,44 @@ function readAccessToken(request: Request): string | undefined {
   return readCookie(request, 'access_token');
 }
 
+function isPasswordChangeAllowed(request: Request): boolean {
+  const url = (request.originalUrl.split('?')[0] ?? '');
+  return url.endsWith('/auth/change-password')
+    || url.endsWith('/auth/logout')
+    || url.endsWith('/auth/me');
+}
+
 export function requireAuthentication(request: Request, response: Response, next: NextFunction): void {
   const token = readAccessToken(request);
   if (!token) {
-    response.status(401).type('application/problem+json').json({ title: 'Authentification requise', status: 401 });
+    problem(response, 401, 'Authentification requise');
     return;
   }
   try {
     request.auth = verifyAccessToken(token);
+  } catch {
+    problem(response, 401, 'Session invalide ou expirée');
+    return;
+  }
+  void enforceMustChangePassword(request, response, next);
+}
+
+async function enforceMustChangePassword(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: request.auth!.userId },
+      select: { mustChangePassword: true },
+    });
+    if (!user) {
+      problem(response, 401, 'Session invalide');
+      return;
+    }
+    if (user.mustChangePassword && !isPasswordChangeAllowed(request)) {
+      problem(response, 403, 'Changement de mot de passe obligatoire');
+      return;
+    }
     next();
   } catch {
-    response.status(401).type('application/problem+json').json({ title: 'Session invalide ou expirée', status: 401 });
+    problem(response, 500, 'Erreur interne du serveur');
   }
 }

@@ -1,12 +1,18 @@
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'refused' | 'expired' | 'converted' | 'cancelled';
-export type QuoteAction = 'delete' | 'send' | 'accept' | 'refuse' | 'expire' | 'convert' | 'cancel';
+
+/**
+ * Actions persistées. `expire` n’est plus une transition écrite (§7) :
+ * l’affichage « expiré » se dérive de `sent` + date de validité dépassée.
+ * Le statut `expired` reste dans le type pour les lectures legacy éventuelles.
+ */
+export type QuoteAction = 'delete' | 'send' | 'accept' | 'refuse' | 'convert' | 'cancel';
 
 const transitions: Readonly<Record<QuoteStatus, ReadonlySet<QuoteAction>>> = {
   draft: new Set(['delete', 'send']),
-  sent: new Set(['accept', 'refuse', 'expire', 'cancel']),
+  sent: new Set(['accept', 'refuse', 'cancel']),
   accepted: new Set(['convert', 'cancel']),
   refused: new Set(),
-  expired: new Set(),
+  expired: new Set(['refuse', 'cancel']),
   converted: new Set(),
   cancelled: new Set(),
 };
@@ -21,5 +27,5 @@ export function applyQuoteAction(status: QuoteStatus, action: QuoteAction): Quot
     throw new RangeError(`Transition de devis interdite : ${status} -> ${action}`);
   }
   if (action === 'delete') return 'deleted';
-  return ({ send: 'sent', accept: 'accepted', refuse: 'refused', expire: 'expired', convert: 'converted', cancel: 'cancelled' } as const)[action];
+  return ({ send: 'sent', accept: 'accepted', refuse: 'refused', convert: 'converted', cancel: 'cancelled' } as const)[action];
 }

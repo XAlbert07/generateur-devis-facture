@@ -67,6 +67,12 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
       await prisma.company.delete({ where: { id: companyId } });
     }
     if (otherCompanyId) {
+      await prisma.payment.deleteMany({ where: { invoice: { companyId: otherCompanyId } } });
+      await prisma.invoice.deleteMany({ where: { companyId: otherCompanyId } });
+      await prisma.quote.deleteMany({ where: { companyId: otherCompanyId } });
+      await prisma.documentSequence.deleteMany({ where: { companyId: otherCompanyId } });
+      await prisma.product.deleteMany({ where: { companyId: otherCompanyId } });
+      await prisma.client.deleteMany({ where: { companyId: otherCompanyId } });
       await prisma.companyMembership.deleteMany({ where: { companyId: otherCompanyId } });
       await prisma.company.delete({ where: { id: otherCompanyId } });
     }
@@ -86,12 +92,17 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     }) });
     expect(created.status).toBe(201);
     const draft = await created.json() as { id: string; version: number };
+    const matchingQuotes = await fetch(`${apiUrl}/quotes?search=CLIENT%20TEST`, { headers });
+    expect(matchingQuotes.status).toBe(200);
+    expect((await matchingQuotes.json() as { data: Array<{ id: string }> }).data.map((quote) => quote.id)).toContain(draft.id);
     const crossTenantRead = await fetch(`${apiUrl}/quotes/${draft.id}`, { headers: { Authorization: `Bearer ${otherToken}` } });
     expect(crossTenantRead.status).toBe(404);
     const sent = await fetch(`${apiUrl}/quotes/${draft.id}/send`, { method: 'POST', headers: { ...headers, 'If-Match': `"${draft.version}"` } });
     expect(sent.status).toBe(200);
-    const sentQuote = await sent.json() as { version: number; snapshotHash: string | null };
+    const sentQuote = await sent.json() as { version: number; number: string; snapshotHash: string | null };
     expect(sentQuote.snapshotHash).toMatch(/^[a-f0-9]{64}$/);
+    const matchingNumber = await fetch(`${apiUrl}/quotes?search=${encodeURIComponent(sentQuote.number)}`, { headers });
+    expect((await matchingNumber.json() as { data: Array<{ id: string }> }).data.map((quote) => quote.id)).toContain(draft.id);
 
     const pdf = await fetch(`${apiUrl}/quotes/${draft.id}/pdf`, { headers });
     expect(pdf.status).toBe(200);
@@ -114,6 +125,25 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     expect(expiredAcceptance.status).toBe(409);
     expect((await prisma.quote.findUniqueOrThrow({ where: { id: expiring.id } })).status).toBe('EXPIRE');
 
+    const cancellationDraftResponse = await fetch(`${apiUrl}/quotes`, { method: 'POST', headers, body: JSON.stringify({
+      clientId, validUntil, lines: [{ description: 'Devis à annuler', quantityMilli: '1000', unitPrice: '900', taxRateBasisPts: 0 }],
+    }) });
+    const cancellationDraft = await cancellationDraftResponse.json() as { id: string; version: number };
+    const cancellationSentResponse = await fetch(`${apiUrl}/quotes/${cancellationDraft.id}/send`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${cancellationDraft.version}"` },
+    });
+    const cancellationSent = await cancellationSentResponse.json() as { version: number };
+    const cancelledQuoteResponse = await fetch(`${apiUrl}/quotes/${cancellationDraft.id}/cancel`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${cancellationSent.version}"` },
+      body: JSON.stringify({ reason: 'Erreur de saisie' }),
+    });
+    expect(cancelledQuoteResponse.status).toBe(200);
+    const cancelledQuote = await cancelledQuoteResponse.json() as { cancellationPdfHash: string | null };
+    expect(cancelledQuote.cancellationPdfHash).toMatch(/^[a-f0-9]{64}$/);
+    const quoteCancellationPdf = await fetch(`${apiUrl}/quotes/${cancellationDraft.id}/cancellation-pdf`, { headers });
+    expect(quoteCancellationPdf.status).toBe(200);
+    expect(Buffer.from(await quoteCancellationPdf.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-');
+
     const conversionHeaders = { ...headers, 'If-Match': `"${acceptedQuote.version}"` };
     const conversions = await Promise.all([1, 2].map(() => fetch(`${apiUrl}/quotes/${draft.id}/convert`, { method: 'POST', headers: conversionHeaders })));
     expect(conversions.map((response) => response.status).sort()).toEqual([200, 201]);
@@ -132,6 +162,8 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     expect(issuedInvoice.status).toBe('EMISE');
     expect(issuedInvoice.number).toMatch(/^FAC-\d{4}-\d{5}$/);
     expect(issuedInvoice.pdfHash).toMatch(/^[a-f0-9]{64}$/);
+    const matchingInvoice = await fetch(`${apiUrl}/invoices?search=${encodeURIComponent(issuedInvoice.number)}`, { headers });
+    expect((await matchingInvoice.json() as { data: Array<{ id: string }> }).data.map((invoice) => invoice.id)).toContain(invoiceId);
     const repeatedIssue = await fetch(`${apiUrl}/invoices/${invoiceId}/issue`, { method: 'POST', headers: issueHeaders });
     expect((await repeatedIssue.json() as { number: string }).number).toBe(issuedInvoice.number);
     const invoicePdf = await fetch(`${apiUrl}/invoices/${invoiceId}/pdf`, { headers });
@@ -367,5 +399,323 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     });
     expect(deletedLogo.status).toBe(200);
     expect((await fetch(`${companyUrl}/logo`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(404);
+  }, 30_000);
+
+  it('isole les mutations devis, factures, paiements et entreprise cross-tenant', async () => {
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const otherHeaders = { Authorization: `Bearer ${otherToken}`, 'Content-Type': 'application/json' };
+    const validUntil = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+
+    // -- Devis : send, accept, refuse, cancel, convert cross-tenant -> 404 ---
+    const quoteResp = await fetch(`${apiUrl}/quotes`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ clientId, validUntil, lines: [{ description: 'Isolation mutations', quantityMilli: '1000', unitPrice: '800', taxRateBasisPts: 0 }] }),
+    });
+    expect(quoteResp.status).toBe(201);
+    const quote = await quoteResp.json() as { id: string; version: number };
+
+    expect((await fetch(`${apiUrl}/quotes/${quote.id}/send`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${quote.version}"` },
+    })).status).toBe(404);
+
+    const sentResp = await fetch(`${apiUrl}/quotes/${quote.id}/send`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${quote.version}"` },
+    });
+    expect(sentResp.status).toBe(200);
+    const sentQuote = await sentResp.json() as { version: number };
+
+    expect((await fetch(`${apiUrl}/quotes/${quote.id}/accept`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${sentQuote.version}"` },
+      body: JSON.stringify({ acceptanceDate: today }),
+    })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/quotes/${quote.id}/refuse`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${sentQuote.version}"` },
+    })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/quotes/${quote.id}/cancel`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${sentQuote.version}"` },
+      body: JSON.stringify({ reason: 'Tentative cross-tenant' }),
+    })).status).toBe(404);
+
+    const acceptedResp = await fetch(`${apiUrl}/quotes/${quote.id}/accept`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${sentQuote.version}"` },
+      body: JSON.stringify({ acceptanceDate: today }),
+    });
+    expect(acceptedResp.status).toBe(200);
+    const acceptedQuote = await acceptedResp.json() as { version: number };
+
+    expect((await fetch(`${apiUrl}/quotes/${quote.id}/convert`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${acceptedQuote.version}"` },
+    })).status).toBe(404);
+
+    // -- Facture brouillon : PUT, DELETE, issue cross-tenant -> 404 -----------
+    const invoiceResp = await fetch(`${apiUrl}/invoices`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ clientId, lines: [{ description: 'Isolation facture', quantityMilli: '1000', unitPrice: '1200', taxRateBasisPts: 0 }] }),
+    });
+    expect(invoiceResp.status).toBe(201);
+    const draftInvoice = await invoiceResp.json() as { id: string; version: number };
+
+    expect((await fetch(`${apiUrl}/invoices/${draftInvoice.id}`, {
+      method: 'PUT', headers: { ...otherHeaders, 'If-Match': `"${draftInvoice.version}"` },
+      body: JSON.stringify({ clientId, lines: [{ description: 'Pirate', quantityMilli: '1000', unitPrice: '1', taxRateBasisPts: 0 }] }),
+    })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/invoices/${draftInvoice.id}`, {
+      method: 'DELETE', headers: { ...otherHeaders, 'If-Match': `"${draftInvoice.version}"` },
+    })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/invoices/${draftInvoice.id}/issue`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${draftInvoice.version}"` },
+    })).status).toBe(404);
+
+    // Emettre la facture pour tester cancel cross-tenant
+    const issuedResp = await fetch(`${apiUrl}/invoices/${draftInvoice.id}/issue`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${draftInvoice.version}"` },
+    });
+    expect(issuedResp.status).toBe(200);
+    const issuedInvoice = await issuedResp.json() as { id: string; version: number };
+
+    expect((await fetch(`${apiUrl}/invoices/${issuedInvoice.id}/cancel`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${issuedInvoice.version}"` },
+      body: JSON.stringify({ reason: 'Tentative cross-tenant' }),
+    })).status).toBe(404);
+
+    // -- Paiements : cancel cross-tenant -> 404 ------------------------------
+    const paymentResp = await fetch(`${apiUrl}/invoices/${issuedInvoice.id}/payments`, {
+      method: 'POST',
+      headers: { ...headers, 'Idempotency-Key': `isolation-pay-${issuedInvoice.id}` },
+      body: JSON.stringify({ amount: '1200', paymentDate: today, method: 'VIREMENT' }),
+    });
+    expect(paymentResp.status).toBe(201);
+    const payment = await paymentResp.json() as { id: string };
+
+    expect((await fetch(`${apiUrl}/invoices/${issuedInvoice.id}/payments/${payment.id}/cancel`, {
+      method: 'POST', headers: otherHeaders,
+      body: JSON.stringify({ reason: 'Tentative cross-tenant' }),
+    })).status).toBe(404);
+
+    // -- Entreprise : autre tenant modifie son compte, pas le notre -----------
+    const ourBefore = await (await fetch(`${apiUrl}/company`, { headers })).json() as { name: string };
+    const nameBefore = ourBefore.name;
+    const otherCompanyGet = await fetch(`${apiUrl}/company`, { headers: otherHeaders });
+    const otherCompanyData = await otherCompanyGet.json() as { version: number };
+    const otherPut = await fetch(`${apiUrl}/company`, {
+      method: 'PUT',
+      headers: { ...otherHeaders, 'If-Match': `"${otherCompanyData.version}"` },
+      body: JSON.stringify({ name: 'Autre modifiee', currency: 'EUR', decimals: 2, defaultTaxRateBasisPts: 0, timezone: 'UTC', paymentDelayDays: 30 }),
+    });
+    expect(otherPut.status).toBe(200);
+    const ourAfter = await (await fetch(`${apiUrl}/company`, { headers })).json() as { name: string };
+    expect(ourAfter.name).toBe(nameBefore);
+  }, 30_000);
+
+  it('applique les CHECK PostgreSQL et isole clients/produits cross-tenant', async () => {
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const otherHeaders = { Authorization: `Bearer ${otherToken}`, 'Content-Type': 'application/json' };
+
+    // CHECK : taux de TVA > 10000 bp
+    await expect(prisma.product.create({
+      data: { companyId, name: 'Taux invalide', unitPrice: 100n, taxRateBasisPts: 10_001 },
+    })).rejects.toThrow(/taux_tva|check|CheckViolation/i);
+
+    // CHECK : prix negatif
+    await expect(prisma.product.create({
+      data: { companyId, name: 'Prix negatif', unitPrice: -1n, taxRateBasisPts: 0 },
+    })).rejects.toThrow(/prix_unitaire|check|CheckViolation/i);
+
+    // CHECK : paiement montant zero
+    const forPayment = await prisma.invoice.create({
+      data: {
+        companyId, clientId, status: 'BROUILLON', origin: 'MANUELLE', currency: 'EUR',
+        totalInclTax: 1000n, lines: { create: [{
+          position: 1, description: 'Ligne', quantityMilli: 1000n, unitPrice: 1000n,
+          taxRateBasisPts: 0, gross: 1000n, discount: 0n, net: 1000n,
+        }] },
+      },
+    });
+    await prisma.invoice.update({
+      where: { id: forPayment.id },
+      data: {
+        status: 'EMISE', number: `FAC-CHECK-${Date.now()}`,
+        issueDate: new Date('2026-01-01'), dueDate: new Date('2026-01-31'),
+      },
+    });
+    await expect(prisma.payment.create({
+      data: {
+        invoiceId: forPayment.id, amount: 0n, paymentDate: new Date('2026-01-02'),
+        method: 'AUTRE', idempotencyKey: `zero-${Date.now()}`, requestHash: 'a'.repeat(64),
+        idempotencyExpiresAt: new Date(Date.now() + 86_400_000), createdByUserId: userId,
+      },
+    })).rejects.toThrow(/montant|amount|check|CheckViolation/i);
+
+    // CHECK : echeance avant emission
+    await expect(prisma.invoice.create({
+      data: {
+        companyId, clientId, status: 'BROUILLON', origin: 'MANUELLE', currency: 'EUR',
+        issueDate: new Date('2026-02-10'), dueDate: new Date('2026-02-01'),
+        totalInclTax: 500n, lines: { create: [{
+          position: 1, description: 'Ligne', quantityMilli: 1000n, unitPrice: 500n,
+          taxRateBasisPts: 0, gross: 500n, discount: 0n, net: 500n,
+        }] },
+      },
+    })).rejects.toThrow(/echeance|check|CheckViolation/i);
+
+    // -- Isolation clients : GET, PUT, archive cross-tenant -> 404 ------------
+    const clientResponse = await fetch(`${apiUrl}/clients`, {
+      method: 'POST', headers, body: JSON.stringify({ name: 'Client isole', email: 'isole@example.test' }),
+    });
+    expect(clientResponse.status).toBe(201);
+    const ownedClient = await clientResponse.json() as { id: string; version: number };
+    expect((await fetch(`${apiUrl}/clients/${ownedClient.id}`, { headers: { Authorization: `Bearer ${otherToken}` } })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/clients/${ownedClient.id}`, {
+      method: 'PUT', headers: { ...otherHeaders, 'If-Match': `"${ownedClient.version}"` },
+      body: JSON.stringify({ name: 'Pirate' }),
+    })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/clients/${ownedClient.id}/archive`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${ownedClient.version}"` },
+    })).status).toBe(404);
+    const otherClientList = await (await fetch(`${apiUrl}/clients?page=1&limit=100`, { headers: { Authorization: `Bearer ${otherToken}` } })).json() as { data: { id: string }[] };
+    expect(otherClientList.data.some((item) => item.id === ownedClient.id)).toBe(false);
+
+    // -- Isolation produits : GET, PUT, archive cross-tenant -> 404 -----------
+    const productResponse = await fetch(`${apiUrl}/products`, {
+      method: 'POST', headers, body: JSON.stringify({
+        name: 'Produit isole', unitPrice: '1500', unit: 'forfait', taxRateBasisPts: 0,
+      }),
+    });
+    expect(productResponse.status).toBe(201);
+    const ownedProduct = await productResponse.json() as { id: string; version: number };
+    expect((await fetch(`${apiUrl}/products/${ownedProduct.id}`, { headers: { Authorization: `Bearer ${otherToken}` } })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/products/${ownedProduct.id}`, {
+      method: 'PUT', headers: { ...otherHeaders, 'If-Match': `"${ownedProduct.version}"` },
+      body: JSON.stringify({ name: 'Pirate', unitPrice: '1', unit: 'u', taxRateBasisPts: 0 }),
+    })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/products/${ownedProduct.id}/archive`, {
+      method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${ownedProduct.version}"` },
+    })).status).toBe(404);
+  }, 30_000);
+
+  it('numeros devis et factures concurrents sans trou', async () => {
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const validUntil = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+
+    // 8 devis envoyes en parallele
+    const drafts = await Promise.all(Array.from({ length: 8 }, (_, index) => fetch(`${apiUrl}/quotes`, {
+      method: 'POST', headers, body: JSON.stringify({
+        clientId, validUntil,
+        lines: [{ description: `Concurrence ${index}`, quantityMilli: '1000', unitPrice: '100', taxRateBasisPts: 0 }],
+      }),
+    })));
+    expect(drafts.every((r) => r.status === 201)).toBe(true);
+    const draftBodies = await Promise.all(drafts.map((r) => r.json() as Promise<{ id: string; version: number }>));
+    const sends = await Promise.all(draftBodies.map((d) => fetch(`${apiUrl}/quotes/${d.id}/send`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${d.version}"` },
+    })));
+    expect(sends.every((r) => r.status === 200)).toBe(true);
+    const sentBodies = await Promise.all(sends.map((r) => r.json() as Promise<{ number: string }>));
+    const numbers = sentBodies.map((q) => q.number).sort();
+    expect(new Set(numbers).size).toBe(numbers.length);
+    const seqs = numbers.map((n) => Number(n.split('-').at(-1)));
+    const min = Math.min(...seqs);
+    const max = Math.max(...seqs);
+    expect(max - min + 1).toBe(seqs.length);
+
+    // 6 factures emises en parallele
+    const invoiceDrafts = await Promise.all(Array.from({ length: 6 }, (_, index) => fetch(`${apiUrl}/invoices`, {
+      method: 'POST', headers, body: JSON.stringify({
+        clientId,
+        lines: [{ description: `Facture concurrente ${index}`, quantityMilli: '1000', unitPrice: '200', taxRateBasisPts: 0 }],
+      }),
+    })));
+    expect(invoiceDrafts.every((r) => r.status === 201)).toBe(true);
+    const invoiceBodies = await Promise.all(invoiceDrafts.map((r) => r.json() as Promise<{ id: string; version: number }>));
+    const issues = await Promise.all(invoiceBodies.map((inv) => fetch(`${apiUrl}/invoices/${inv.id}/issue`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${inv.version}"` },
+    })));
+    expect(issues.every((r) => r.status === 200)).toBe(true);
+    const issuedBodies = await Promise.all(issues.map((r) => r.json() as Promise<{ number: string }>));
+    const invoiceNumbers = issuedBodies.map((i) => i.number).sort();
+    expect(new Set(invoiceNumbers).size).toBe(invoiceNumbers.length);
+    const invoiceSeqs = invoiceNumbers.map((n) => Number(n.split('-').at(-1)));
+    const invMin = Math.min(...invoiceSeqs);
+    const invMax = Math.max(...invoiceSeqs);
+    expect(invMax - invMin + 1).toBe(invoiceSeqs.length);
+  }, 60_000);
+
+  it('serialise la course paiement / annulation de facture', async () => {
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const today = new Date().toISOString().slice(0, 10);
+    const created = await fetch(`${apiUrl}/invoices`, {
+      method: 'POST', headers, body: JSON.stringify({
+        clientId,
+        lines: [{ description: 'Course paiement/annulation', quantityMilli: '1000', unitPrice: '4000', taxRateBasisPts: 0 }],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const draft = await created.json() as { id: string; version: number };
+    const issued = await fetch(`${apiUrl}/invoices/${draft.id}/issue`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${draft.version}"` },
+    });
+    expect(issued.status).toBe(200);
+    const invoice = await issued.json() as { id: string; version: number; status: string };
+    expect(invoice.status).toBe('EMISE');
+
+    const [paymentResponse, cancelResponse] = await Promise.all([
+      fetch(`${apiUrl}/invoices/${invoice.id}/payments`, {
+        method: 'POST',
+        headers: { ...headers, 'Idempotency-Key': `race-pay-cancel-${invoice.id}` },
+        body: JSON.stringify({ amount: '4000', paymentDate: today, method: 'VIREMENT' }),
+      }),
+      fetch(`${apiUrl}/invoices/${invoice.id}/cancel`, {
+        method: 'POST',
+        headers: { ...headers, 'If-Match': `"${invoice.version}"` },
+        body: JSON.stringify({ reason: 'Course concurrente de test' }),
+      }),
+    ]);
+
+    // Un seul gagnant coherent
+    expect(
+      (paymentResponse.status === 201 && cancelResponse.status === 409)
+      || (paymentResponse.status === 409 && cancelResponse.status === 200),
+    ).toBe(true);
+
+    const final = await (await fetch(`${apiUrl}/invoices/${invoice.id}`, { headers })).json() as { status: string };
+    const payments = await (await fetch(`${apiUrl}/invoices/${invoice.id}/payments`, { headers })).json() as {
+      data: { id: string; cancelledAt: string | null }[];
+    };
+    const activePayments = payments.data.filter((p) => !p.cancelledAt);
+
+    if (paymentResponse.status === 201) {
+      expect(final.status).toBe('EMISE');
+      expect(activePayments).toHaveLength(1);
+    } else {
+      expect(final.status).toBe('ANNULEE');
+      expect(activePayments).toHaveLength(0);
+    }
+  }, 30_000);
+
+  it('refuse en SQL la mutation des montants sur une facture emise', async () => {
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const created = await fetch(`${apiUrl}/invoices`, {
+      method: 'POST', headers, body: JSON.stringify({
+        clientId,
+        lines: [{ description: 'Immutabilite SQL', quantityMilli: '1000', unitPrice: '1200', taxRateBasisPts: 0 }],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const draft = await created.json() as { id: string; version: number };
+    const issued = await fetch(`${apiUrl}/invoices/${draft.id}/issue`, {
+      method: 'POST', headers: { ...headers, 'If-Match': `"${draft.version}"` },
+    });
+    expect(issued.status).toBe(200);
+    const invoice = await issued.json() as { id: string };
+
+    await expect(prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { totalInclTax: 1n },
+    })).rejects.toThrow(/immuable|immutable|integrity/i);
+
+    await expect(prisma.$executeRaw`
+      UPDATE "ligne_facture" SET "net" = 1 WHERE "facture_id" = ${invoice.id}::uuid
+    `).rejects.toThrow(/immuable|immutable|integrity/i);
   }, 30_000);
 });

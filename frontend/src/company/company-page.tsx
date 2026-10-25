@@ -16,6 +16,7 @@ const schema = z.object({ name: z.string().trim().min(2, 'Saisissez au moins 2 c
   quotePrefix: z.string().regex(/^[A-Z0-9]{1,12}$/, '1 à 12 lettres majuscules ou chiffres.'), invoicePrefix: z.string().regex(/^[A-Z0-9]{1,12}$/, '1 à 12 lettres majuscules ou chiffres.'),
   paymentDelayDays: z.string().regex(/^\d+$/, 'Saisissez un nombre de jours.').refine((value) => Number(value) <= 3_650, 'Maximum 3 650 jours.'),
   legalMentions: z.string().max(4_000), footerText: z.string().max(2_000), paymentTerms: z.string().max(2_000),
+  language: z.enum(['fr', 'en'], { errorMap: () => ({ message: 'Choisissez une langue.' }) }),
 });
 type Values = z.infer<typeof schema>;
 function valuesFrom(company: CompanySettings): Values {
@@ -23,7 +24,7 @@ function valuesFrom(company: CompanySettings): Values {
   return { name: company.name, address: company.address ?? '', phone: company.phone ?? '', email: company.email ?? '', currency: company.currency,
     decimals: String(company.decimals), defaultTaxPercent: `${basis / 100n}${fraction ? `.${fraction}` : ''}`, timezone: company.timezone,
     quotePrefix: company.quotePrefix, invoicePrefix: company.invoicePrefix, paymentDelayDays: String(company.paymentDelayDays),
-    legalMentions: company.legalMentions ?? '', footerText: company.footerText ?? '', paymentTerms: company.paymentTerms ?? '' };
+    legalMentions: company.legalMentions ?? '', footerText: company.footerText ?? '', paymentTerms: company.paymentTerms ?? '', language: (company.language ?? 'fr') as 'fr' | 'en' };
 }
 
 export function CompanyPage() {
@@ -49,7 +50,7 @@ export function CompanyPage() {
       const saved = await saveCompany({ name: values.name, address: values.address || null, phone: values.phone || null, email: values.email || null,
         taxIdentifiers: entriesToTextMap(taxRows), paymentDetails: entriesToTextMap(paymentRows), currency: values.currency, decimals: Number(values.decimals),
         defaultTaxRateBasisPts: parseTaxPercent(values.defaultTaxPercent), timezone: values.timezone, quotePrefix: values.quotePrefix, invoicePrefix: values.invoicePrefix,
-        paymentDelayDays: Number(values.paymentDelayDays), legalMentions: values.legalMentions || null, footerText: values.footerText || null, paymentTerms: values.paymentTerms || null,
+        paymentDelayDays: Number(values.paymentDelayDays), legalMentions: values.legalMentions || null, footerText: values.footerText || null, paymentTerms: values.paymentTerms || null, language: values.language,
       }, company.version);
       setCompany(saved); reset(valuesFrom(saved)); setTaxRows(textMapEntries(saved.taxIdentifiers)); setPaymentRows(textMapEntries(saved.paymentDetails)); setMapsDirty(false);
     } catch (cause) { if (cause instanceof ApiError && cause.status === 409) { setConflict(true); setError('Les paramètres ont changé depuis leur chargement. Rechargez la version actuelle avant de modifier.'); }
@@ -84,7 +85,8 @@ export function CompanyPage() {
           <button className="button-secondary" type="button" onClick={() => updateTaxRows([...taxRows, { key: '', value: '' }])}>＋ Ajouter un identifiant</button></section>
         <section className="panel company-section"><h2>Devise et fiscalité</h2><div className="company-fields company-fields-four"><Field label="Code devise" maxLength={3} error={errors.currency?.message} {...currencyField} onChange={(event) => { void currencyField.onChange(event); setValue('currency', event.target.value.toUpperCase(), { shouldValidate: true }); }} />
           <Field label="Décimales monétaires" type="number" min="0" max="6" error={errors.decimals?.message} {...register('decimals')} /><Field label="TVA par défaut (%)" inputMode="decimal" error={errors.defaultTaxPercent?.message} {...register('defaultTaxPercent')} />
-          <Field label="Fuseau horaire" placeholder="Africa/Ouagadougou" error={errors.timezone?.message} {...register('timezone')} /></div></section>
+          <Field label="Fuseau horaire" placeholder="Africa/Ouagadougou" error={errors.timezone?.message} {...register('timezone')} />
+          <label className="form-field"><span>Langue des documents PDF</span><select {...register('language')}><option value="fr">Français</option><option value="en">English</option></select>{errors.language && <small className="field-error">{errors.language.message}</small>}</label></div></section>
         <section className="panel company-section"><h2>Numérotation et paiement</h2><div className="company-fields company-fields-four"><Field label="Préfixe devis" maxLength={12} error={errors.quotePrefix?.message} {...register('quotePrefix')} /><Field label="Préfixe facture" maxLength={12} error={errors.invoicePrefix?.message} {...register('invoicePrefix')} />
           <Field label="Délai de paiement (jours)" type="number" min="0" max="3650" error={errors.paymentDelayDays?.message} {...register('paymentDelayDays')} /></div>
           <label className="form-field"><span>Conditions de paiement</span><textarea rows={3} {...register('paymentTerms')} /></label>

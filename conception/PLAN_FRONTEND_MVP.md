@@ -59,4 +59,4 @@ relier à l'API existante sans dupliquer ses règles métier.
   l'interface et appliqué de nouveau par le serveur.
 - [x] Réglages entreprise : coordonnées, identifiants fiscaux, devise/taxes,
   numérotation, paiement, mentions PDF et logo avec contrôle de version.
-- [ ] Étape 5 : tests navigateur de bout en bout, accessibilité et revue complète.
+- [x] Étape 5 : tests navigateur de bout en bout, accessibilité et revue complète.

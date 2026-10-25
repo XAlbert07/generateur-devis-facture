@@ -17,6 +17,7 @@ export async function createQuote(request: Request, response: Response): Promise
   const quote = await prisma.quote.create({ data: {
     companyId: request.auth!.companyId, clientId: input.clientId ?? null,
     validUntil: input.validUntil ? new Date(`${input.validUntil}T00:00:00.000Z`) : null,
+    notes: input.notes ?? null,
     currency: (await prisma.company.findUniqueOrThrow({ where: { id: request.auth!.companyId }, select: { currency: true } })).currency,
     ...calculated, taxBreakdown: calculated.taxBreakdown as never, lines: { create: calculated.lines },
   }, include: { lines: { orderBy: { position: 'asc' } } } });
@@ -35,6 +36,7 @@ export async function updateQuote(request: Request, response: Response): Promise
   const quote = await prisma.$transaction(async (tx) => {
     const changed = await tx.quote.updateMany({ where: { id: quoteId, companyId, version, status: 'BROUILLON' }, data: {
       clientId: input.clientId ?? null, validUntil: input.validUntil ? new Date(`${input.validUntil}T00:00:00.000Z`) : null,
+      notes: input.notes ?? null,
       ...calculated, taxBreakdown: calculated.taxBreakdown as never, version: { increment: 1 },
     } });
     if (!changed.count) return null;

@@ -19,6 +19,10 @@ compose.yaml   PostgreSQL local (Docker Compose)
 [`conception/ETAT_BACKEND_BASE_DE_DONNEES.md`](conception/ETAT_BACKEND_BASE_DE_DONNEES.md).
 La comparaison point par point avec la conception v2.0 se trouve dans
 [`conception/COMPARAISON_CONCEPTION_V2_IMPLEMENTATION.md`](conception/COMPARAISON_CONCEPTION_V2_IMPLEMENTATION.md).
+Le plan des restes jusqu’à la production :
+[`conception/PLAN_RESTE_MVP_PRODUCTION.md`](conception/PLAN_RESTE_MVP_PRODUCTION.md)
+(vague A : `npm run ops:restore-drill`, `npm run audit:deps`, exemples TLS dans
+`deploy/`).
 
 ## Démarrer en développement
 
@@ -66,8 +70,10 @@ Vite sert l'application sur `http://localhost:5173` et relaie `/api` vers
 l'API locale sur le port 3000. Les commandes `npm run typecheck:web` et
 `npm run build:web` vérifient et construisent le frontend.
 
-L'API expose `GET /api/v1/health`, l'authentification, les clients, les
-produits et les devis. Les devis prennent en charge le brouillon, les calculs,
+L'API expose `GET /api/v1/health`, `GET /api/v1/ready` (sonde PostgreSQL),
+l'authentification, les clients, les
+produits et les devis. Les opérations courantes (reset mot de passe,
+sauvegarde) sont dans [`conception/RUNBOOK.md`](conception/RUNBOOK.md). Les devis prennent en charge le brouillon, les calculs,
 l'envoi numéroté, le PDF depuis l'instantané, l'expiration, l'acceptation, le
 refus, l'annulation et la conversion idempotente en facture brouillon. Les
 factures peuvent être listées et consultées, puis émises avec un numéro annuel,

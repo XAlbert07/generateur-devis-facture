@@ -1,0 +1,26 @@
+{
+  "deferredUntil": "2026-12-31",
+  "notes": "Exceptions temporaires pour majors incompatibles avec le MVP actuel. Réévaluer avant prod.",
+  "advisories": [
+    {
+      "id": "GHSA-ggr8-5vv4-36mx",
+      "reason": "deepmerge-ts via prisma@6 / @prisma/config — attendre correctif 6.x ou migration Prisma 7/8"
+    },
+    {
+      "id": "GHSA-5gmw-xhrv-c9v3",
+      "reason": "tinypool via vitest@3 (devDependency) — fix dans vitest@5 (breaking)"
+    },
+    {
+      "id": "GHSA-85c8-ppgw-ccpr",
+      "reason": "tinypool via vitest@3 (devDependency) — fix dans vitest@5 (breaking)"
+    },
+    {
+      "id": "GHSA-82fw-gwwq-j7x9",
+      "reason": "vitest@3 path traversal mocker (devDependency) — fix dans vitest@5 (breaking)"
+    },
+    {
+      "id": "GHSA-mrhx-c7xc-m3w5",
+      "reason": "zod@3 — fix dans zod@4 (breaking pour schémas API)"
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
+import { recordAudit } from '../audit/record.js';
 import { invoiceIdFrom, problem, withVersion } from '../invoices/common.js';
 import { hashSnapshot } from '../../../shared/documents/snapshot.js';
 import { summarizePayments } from './summary.js';
@@ -71,6 +72,12 @@ paymentsRouter.post('/', async (request: Request, response: Response) => {
   if (result.kind === 'invoice-state') return problem(response, 409, 'Les paiements exigent une facture émise');
   if (result.kind === 'overpayment') return problem(response, 409, 'Le paiement dépasse le solde restant');
   if (result.kind === 'key-conflict') return problem(response, 409, 'Idempotency-Key déjà utilisée avec une autre requête');
+  if (result.kind === 'created') {
+    await recordAudit(request, {
+      action: 'payment.create', companyId, userId,
+      resource: 'payment', resourceId: result.payment.id, metadata: { invoiceId },
+    });
+  }
   withVersion(response, result.version);
   response.status(result.kind === 'created' ? 201 : 200).json(result.payment);
 });
@@ -102,6 +109,12 @@ paymentsRouter.post('/:paymentId/cancel', async (request: Request, response: Res
   if (result.kind === 'not-found') return problem(response, 404, 'Facture introuvable');
   if (result.kind === 'payment-not-found') return problem(response, 404, 'Paiement introuvable');
   if (result.kind === 'invoice-state') return problem(response, 409, 'La facture doit être émise pour annuler un paiement');
+  if (result.kind === 'cancelled') {
+    await recordAudit(request, {
+      action: 'payment.cancel', companyId, userId,
+      resource: 'payment', resourceId: result.payment.id, metadata: { invoiceId },
+    });
+  }
   withVersion(response, result.version);
   response.status(200).json(result.payment);
 });

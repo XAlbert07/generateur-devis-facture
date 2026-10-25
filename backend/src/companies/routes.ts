@@ -3,7 +3,9 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuthentication } from '../auth/authenticate.js';
+import { recordAudit } from '../audit/record.js';
 import { prisma } from '../db/prisma.js';
+import { problem } from '../http/problem.js';
 import { companyLogoRouter } from './logo-routes.js';
 
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
@@ -23,15 +25,12 @@ const companyInput = z.object({
   paymentDelayDays: z.number().int().min(0).max(3_650),
   legalMentions: nullableText(4_000), footerText: nullableText(2_000),
   paymentTerms: nullableText(2_000), paymentDetails: jsonTextMap,
+  language: z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/).default('fr'),
 });
 
 function versionFrom(request: Request): number | undefined {
   const value = Number(request.header('if-match')?.replaceAll('"', ''));
   return Number.isInteger(value) && value > 0 ? value : undefined;
-}
-
-function problem(response: Response, status: number, title: string, errors?: unknown): void {
-  response.status(status).type('application/problem+json').json({ title, status, ...(errors ? { errors } : {}) });
 }
 
 export const companiesRouter = Router();
@@ -62,5 +61,9 @@ companiesRouter.put('/', async (request: Request, response: Response) => {
   });
   if (!changed.count) return problem(response, 409, 'Entreprise modifiée ou introuvable');
   const company = await prisma.company.findUniqueOrThrow({ where: { id: request.auth!.companyId } });
+  await recordAudit(request, {
+    action: 'company.update', companyId: company.id, userId: request.auth!.userId,
+    resource: 'company', resourceId: company.id,
+  });
   response.setHeader('ETag', `"${company.version}"`).json({ ...company, currency: company.currency.trim() });
 });

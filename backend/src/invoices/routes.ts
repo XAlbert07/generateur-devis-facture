@@ -16,8 +16,15 @@ invoicesRouter.use('/:id/payments', paymentsRouter);
 invoicesRouter.get('/', async (request: Request, response: Response) => {
   const parsed = invoiceListInput.safeParse(request.query);
   if (!parsed.success) return problem(response, 422, 'Paramètres invalides', parsed.error.flatten().fieldErrors);
-  const { page, limit, status } = parsed.data; const companyId = request.auth!.companyId;
-  const where = { companyId, ...(status ? { status } : {}) };
+  const { page, limit, status, search } = parsed.data; const companyId = request.auth!.companyId;
+  const where = {
+    companyId,
+    ...(status ? { status } : {}),
+    ...(search ? { OR: [
+      { number: { contains: search, mode: 'insensitive' as const } },
+      { client: { is: { name: { contains: search, mode: 'insensitive' as const } } } },
+    ] } : {}),
+  };
   const [data, total] = await Promise.all([
     prisma.invoice.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit, include: { client: { select: { id: true, name: true } } } }),
     prisma.invoice.count({ where }),

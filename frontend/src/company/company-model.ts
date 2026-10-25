@@ -3,7 +3,7 @@ export type CompanySettings = {
   id: string; version: number; name: string; address: string | null; phone: string | null; email: string | null;
   taxIdentifiers: TextMap; logoHash: string | null; currency: string; decimals: number; defaultTaxRateBasisPts: number;
   timezone: string; quotePrefix: string; invoicePrefix: string; paymentDelayDays: number; legalMentions: string | null;
-  footerText: string | null; paymentTerms: string | null; paymentDetails: TextMap;
+  footerText: string | null; paymentTerms: string | null; paymentDetails: TextMap; language: string;
 };
 export type KeyValue = { key: string; value: string };
 export function textMapEntries(map: TextMap): KeyValue[] {

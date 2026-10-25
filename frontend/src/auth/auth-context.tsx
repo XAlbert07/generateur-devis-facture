@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { ApiError, apiRequest } from '../api/http';
 
 export type Session = {
-  user: { id: string; name: string; email: string };
+  user: { id: string; name: string; email: string; mustChangePassword?: boolean };
   company: { id: string; name: string };
   role: string;
 };
@@ -24,12 +24,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       setSession(await apiRequest<Session>('/auth/me'));
-      setError(null);
     } catch (cause) {
-      setSession(null);
-      setError(cause instanceof ApiError && cause.status === 401 ? null : 'Connexion au serveur impossible.');
+      if (cause instanceof ApiError && cause.status === 401) {
+        try {
+          setSession(await apiRequest<Session>('/auth/refresh', { method: 'POST' }));
+        } catch {
+          setSession(null);
+        }
+      } else {
+        setSession(null);
+        setError('Connexion au serveur impossible.');
+      }
     } finally {
       setLoading(false);
     }

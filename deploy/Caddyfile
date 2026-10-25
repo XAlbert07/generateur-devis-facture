@@ -1,0 +1,32 @@
+# Exemple de terminaison TLS devant l’API + le frontend (vague A1).
+# Remplacer example.test par le domaine réel et placer ce fichier
+# là où Caddy le charge (souvent /etc/caddy/Caddyfile).
+#
+# Prérequis côté app :
+#   NODE_ENV=production
+#   CORS_ORIGIN=https://example.test   # si le front n’est pas same-origin
+#   JWT_SECRET=<secret ≥ 32 caractères>
+#
+# Démarrer l’API sur 127.0.0.1:3000 et servir le build frontend
+# (npm run build:web → frontend/dist) ou un second reverse-proxy.
+
+example.test {
+	encode gzip
+
+	# Frontend statique (adapter le chemin)
+	handle {
+		root * /var/www/generateur-devis-facture
+		try_files {path} /index.html
+		file_server
+	}
+
+	# API Express
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	header {
+		# Complète les en-têtes déjà posés par l’API
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}

@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuthentication } from '../auth/authenticate.js';
 import { prismaForCompany } from '../db/company-prisma.js';
+import { problem } from '../http/problem.js';
 
 const identifier = z.string().uuid();
 const clientInput = z.object({
@@ -36,11 +37,11 @@ function sendVersion(response: Response, version: number): void {
 }
 
 function notFound(response: Response): void {
-  response.status(404).type('application/problem+json').json({ title: 'Client introuvable', status: 404 });
+  problem(response, 404, 'Client introuvable');
 }
 
 function invalid(response: Response, errors: unknown): void {
-  response.status(422).type('application/problem+json').json({ title: 'Données invalides', status: 422, errors });
+  problem(response, 422, 'Données invalides', errors);
 }
 
 export const clientsRouter = Router();
@@ -87,18 +88,14 @@ clientsRouter.put('/:id', async (request: Request, response: Response) => {
   const version = versionFrom(request);
   if (!id.success) return notFound(response);
   if (!input.success) return invalid(response, input.error.flatten().fieldErrors);
-  if (!version) {
-    response.status(428).type('application/problem+json').json({ title: 'En-tête If-Match requis', status: 428 });
-    return;
-  }
+  if (!version) return problem(response, 428, 'En-tête If-Match requis');
   const db = prismaForCompany(request.auth!.companyId);
+  const existing = await db.client.findUnique({ where: { id: id.data }, select: { id: true } });
+  if (!existing) return notFound(response);
   const changed = await db.client.updateMany({
     where: { id: id.data, version }, data: { ...input.data, version: { increment: 1 } } as never,
   });
-  if (changed.count === 0) {
-    response.status(409).type('application/problem+json').json({ title: 'Client modifié ou introuvable', status: 409 });
-    return;
-  }
+  if (changed.count === 0) return problem(response, 409, 'Client modifié concurrentement');
   const client = await db.client.findUniqueOrThrow({ where: { id: id.data } });
   sendVersion(response, client.version);
   response.json(client);
@@ -108,17 +105,13 @@ clientsRouter.post('/:id/archive', async (request: Request, response: Response) 
   const id = identifier.safeParse(request.params.id);
   const version = versionFrom(request);
   if (!id.success) return notFound(response);
-  if (!version) {
-    response.status(428).type('application/problem+json').json({ title: 'En-tête If-Match requis', status: 428 });
-    return;
-  }
+  if (!version) return problem(response, 428, 'En-tête If-Match requis');
   const db = prismaForCompany(request.auth!.companyId);
+  const existing = await db.client.findUnique({ where: { id: id.data }, select: { id: true, archivedAt: true } });
+  if (!existing) return notFound(response);
   const changed = await db.client.updateMany({
     where: { id: id.data, version, archivedAt: null }, data: { archivedAt: new Date(), version: { increment: 1 } },
   });
-  if (changed.count === 0) {
-    response.status(409).type('application/problem+json').json({ title: 'Client modifié, archivé ou introuvable', status: 409 });
-    return;
-  }
+  if (changed.count === 0) return problem(response, 409, 'Client modifié ou déjà archivé');
   response.status(204).send();
 });

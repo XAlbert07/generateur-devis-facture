@@ -2,9 +2,10 @@ import { apiRequest } from '../api/http';
 import type { Quote, QuoteStatus } from './quote-model';
 
 export type QuoteList = { data: Quote[]; meta: { page: number; total: number; totalPages: number } };
-export function listQuotes(page: number, status?: QuoteStatus, signal?: AbortSignal): Promise<QuoteList> {
+export function listQuotes(page: number, status?: QuoteStatus, search?: string, signal?: AbortSignal): Promise<QuoteList> {
   const params = new URLSearchParams({ page: String(page), limit: '20' });
   if (status) params.set('status', status);
+  if (search) params.set('search', search);
   return apiRequest(`/quotes?${params}`, { signal });
 }
 export function getQuote(id: string): Promise<Quote> { return apiRequest(`/quotes/${id}`); }

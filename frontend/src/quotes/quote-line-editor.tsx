@@ -15,6 +15,7 @@ export function QuoteLineEditor({ index, register, setValue, products, company, 
       const product = products.find((item) => item.id === event.target.value);
       if (!product) return;
       setValue(`lines.${index}.description`, product.description ? `${product.name} — ${product.description}` : product.name, { shouldValidate: true });
+      setValue(`lines.${index}.quantity`, '1', { shouldValidate: true });
       setValue(`lines.${index}.unitPrice`, minorUnitsToInput(product.unitPrice, company.decimals), { shouldValidate: true });
       setValue(`lines.${index}.taxRate`, (product.taxRateBasisPts / 100).toFixed(2).replace(/\.?0+$/, ''), { shouldValidate: true });
     }}><option value="">Choisir un produit ou service…</option>{products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>

@@ -67,6 +67,8 @@ export function DashboardPage() {
 }
 
 function Metric({ title, value, hint, tone }: { title: string; value: string; hint: string; tone: string }) {
-  return <article className="metric-card"><div className="metric-top"><span>{title}</span><i className={`metric-dot ${tone}`} /></div>
-    <strong>{value}</strong><small>{hint}</small></article>;
+  return <article className="metric-card" aria-label={`${title} : ${value}`}>
+    <div className="metric-top"><span>{title}</span><i className={`metric-dot ${tone}`} aria-hidden="true" /></div>
+    <strong>{value}</strong><small>{hint}</small>
+  </article>;
 }

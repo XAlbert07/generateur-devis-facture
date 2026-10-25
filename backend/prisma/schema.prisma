@@ -60,15 +60,46 @@ model User {
   email        String              @unique
   passwordHash String              @map("password_hash")
   mustChangePassword Boolean       @default(false) @map("doit_changer_mot_de_passe")
+  lockedUntil       DateTime?      @map("verrouille_jusqu_au") @db.Timestamptz(6)
   lastLoginAt       DateTime?      @map("derniere_connexion") @db.Timestamptz(6)
   memberships  CompanyMembership[]
+  refreshTokens RefreshToken[]
   paymentsCreated   Payment[]           @relation("PaymentCreator")
   paymentsCancelled Payment[]           @relation("PaymentCanceller")
   invoicesCancelled Invoice[]           @relation("InvoiceCanceller")
+  quotesCancelled   Quote[]             @relation("QuoteCanceller")
   createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("utilisateur")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("utilisateur_id") @db.Uuid
+  tokenHash   String    @unique @map("empreinte_jeton") @db.Char(64)
+  familyId    String    @map("famille_id") @db.Uuid
+  expiresAt   DateTime  @map("expire_le") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoque_le") @db.Timestamptz(6)
+  replacedById String?  @map("remplace_par") @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_token")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String?
+  ip        String
+  succeeded Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+  @@map("tentative_connexion")
 }
 
 model Company {
@@ -91,6 +122,7 @@ model Company {
   footerText        String?             @map("pied_de_page_pdf")
   paymentTerms      String?             @map("conditions_paiement")
   paymentDetails    Json?               @map("coordonnees_reglement")
+  language          String              @default("fr") @map("langue") @db.VarChar(5)
   version           Int                 @default(1)
   memberships       CompanyMembership[]
   clients           Client[]
@@ -98,6 +130,7 @@ model Company {
   quotes            Quote[]
   invoices          Invoice[]
   documentSequences DocumentSequence[]
+  storedFiles       StoredFile[]
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -161,6 +194,7 @@ model Quote {
   number              String?
   status              QuoteStatus   @default(BROUILLON)
   validUntil          DateTime?     @map("date_validite") @db.Date
+  notes               String?       @map("notes")
   currency            String        @db.Char(3)
   globalDiscountType  DiscountType? @map("remise_globale_type")
   globalDiscountValue BigInt?       @map("remise_globale_valeur")
@@ -172,14 +206,23 @@ model Quote {
   taxBreakdown        Json?         @map("ventilation_tva")
   sentAt              DateTime?     @map("envoye_le") @db.Timestamptz(6)
   acceptanceDate      DateTime?     @map("date_acceptation") @db.Date
+  acceptanceRecordedAt DateTime?    @map("accepte_saisi_le") @db.Timestamptz(6)
+  refusedAt           DateTime?     @map("refuse_le") @db.Timestamptz(6)
+  refusalReason       String?       @map("motif_refus")
+  cancelledAt         DateTime?     @map("annule_le") @db.Timestamptz(6)
+  cancelledByUserId   String?       @map("annule_par") @db.Uuid
+  cancellationReason  String?       @map("motif_annulation")
   snapshot            Json?
   snapshotVersion     Int?          @map("snapshot_version")
   snapshotHash        String?       @map("hash_snapshot")
   pdfReference        String?       @map("pdf_reference")
   pdfHash             String?       @map("hash_pdf") @db.Char(64)
+  cancellationPdf     String?       @map("pdf_annulation_reference")
+  cancellationPdfHash String?       @map("hash_pdf_annulation") @db.Char(64)
   version             Int           @default(1)
   company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   client              Client?       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  cancelledBy         User?         @relation("QuoteCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict)
   lines               QuoteLine[]
   invoice             Invoice?
   createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -308,4 +351,36 @@ model DocumentSequence {
 
   @@id([companyId, type, year])
   @@map("sequence_document")
+}
+
+model AuditEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String?  @map("entreprise_id") @db.Uuid
+  userId     String?  @map("utilisateur_id") @db.Uuid
+  action     String
+  resource   String?  @map("ressource")
+  resourceId String?  @map("ressource_id")
+  requestId  String?  @map("requete_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([companyId, createdAt])
+  @@index([action, createdAt])
+  @@map("evenement_audit")
+}
+
+/// Fichiers (PDF émis, logos) conservés dans PostgreSQL lorsque DOCUMENTS_STORAGE=database.
+/// Indispensable sur un hébergement dont le disque est éphémère. La clé est la même
+/// référence relative que celle utilisée sur le disque (`<entreprise>/<document>.pdf`).
+model StoredFile {
+  reference String   @id
+  companyId String   @map("entreprise_id") @db.Uuid
+  sha256    String   @db.Char(64)
+  bytes     Bytes
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@map("fichier_stocke")
 }

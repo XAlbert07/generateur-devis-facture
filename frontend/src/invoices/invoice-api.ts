@@ -2,9 +2,10 @@ import { apiRequest } from '../api/http';
 import type { Invoice, InvoiceStatus } from './invoice-model';
 
 export type InvoiceList = { data: Invoice[]; meta: { page: number; total: number; totalPages: number } };
-export function listInvoices(page: number, status?: InvoiceStatus, signal?: AbortSignal): Promise<InvoiceList> {
+export function listInvoices(page: number, status?: InvoiceStatus, search?: string, signal?: AbortSignal): Promise<InvoiceList> {
   const params = new URLSearchParams({ page: String(page), limit: '20' });
   if (status) params.set('status', status);
+  if (search) params.set('search', search);
   return apiRequest(`/invoices?${params}`, { signal });
 }
 export function getInvoice(id: string): Promise<Invoice> { return apiRequest(`/invoices/${id}`); }

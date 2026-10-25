@@ -14,6 +14,7 @@ export type DraftDocument = {
 export type Quote = DraftDocument & { number: string | null; status: QuoteStatus; validUntil: string | null };
 export type QuoteFormValues = {
   clientId: string; validUntil: string; globalDiscountType: DiscountType; globalDiscountValue: string;
+  notes: string;
   lines: { productId: string; description: string; quantity: string; unitPrice: string; taxRate: string; discountType: DiscountType; discountValue: string }[];
 };
 export type ClientOption = { id: string; name: string };

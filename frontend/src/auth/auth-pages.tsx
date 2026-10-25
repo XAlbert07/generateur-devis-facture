@@ -79,3 +79,36 @@ export function RegisterPage() {
     <p className="auth-switch">Déjà inscrit ? <Link to="/login">Se connecter</Link></p>
   </AuthFrame>;
 }
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Mot de passe actuel requis.'),
+  newPassword: z.string().min(12, '12 caractères minimum.'),
+});
+type ChangePasswordValues = z.infer<typeof changePasswordSchema>;
+
+export function ChangePasswordPage() {
+  const navigate = useNavigate();
+  const { refresh } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ChangePasswordValues>({
+    resolver: zodResolver(changePasswordSchema),
+  });
+  const submit = handleSubmit(async (values) => {
+    setError(null);
+    try {
+      await apiRequest('/auth/change-password', { method: 'POST', body: JSON.stringify(values) });
+      await refresh();
+      navigate('/', { replace: true });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Changement impossible.');
+    }
+  });
+  return <AuthFrame heading="Nouveau mot de passe." subtitle="Pour sécuriser votre compte, choisissez un mot de passe personnel.">
+    <form className="auth-form" onSubmit={submit} noValidate>
+      {error && <div className="form-alert" role="alert">{error}</div>}
+      <Field label="Mot de passe actuel" type="password" autoComplete="current-password" error={errors.currentPassword?.message} {...register('currentPassword')} />
+      <Field label="Nouveau mot de passe" type="password" autoComplete="new-password" placeholder="12 caractères minimum" error={errors.newPassword?.message} {...register('newPassword')} />
+      <button className="button-primary" disabled={isSubmitting}>{isSubmitting ? 'Enregistrement…' : 'Enregistrer'}<span aria-hidden="true">→</span></button>
+    </form>
+  </AuthFrame>;
+}
