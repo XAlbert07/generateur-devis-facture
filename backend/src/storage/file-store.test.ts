@@ -110,7 +110,7 @@ describe('stockage des fichiers', () => {
   });
 
   it('construit les mêmes références pour les devis, factures et annulations', async () => {
-    const { saveQuotePdf, saveInvoicePdf, saveCancellationPdf, saveQuoteCancellationPdf, hashPdf } = await import('../quotes/pdf-storage.js');
+    const { saveQuotePdf, saveInvoicePdf, saveCancellationPdf, saveQuoteCancellationPdf, hashPdf, hashQuotePdf } = await import('../quotes/pdf-storage.js');
     vi.resetModules();
     const bytes = Buffer.from('%PDF');
 
@@ -118,6 +118,10 @@ describe('stockage des fichiers', () => {
     expect((await saveInvoicePdf(companyId, 'd1', bytes)).reference).toBe(`${companyId}/invoices/d1.pdf`);
     expect((await saveCancellationPdf(companyId, 'd1', bytes)).reference).toBe(`${companyId}/cancellations/d1.pdf`);
     expect((await saveQuoteCancellationPdf(companyId, 'd1', bytes)).reference).toBe(`${companyId}/quote-cancellations/d1.pdf`);
-    expect((await saveQuotePdf(companyId, 'd1', bytes)).hash).toBe(hashPdf(bytes));
+    // Devis : empreinte hashQuotePdf (même valeur que celle revérifiée à la lecture) ; factures : empreinte brute.
+    expect((await saveQuotePdf(companyId, 'd1', bytes)).hash).toBe(hashQuotePdf(bytes));
+    expect((await saveQuoteCancellationPdf(companyId, 'd1', bytes)).hash).toBe(hashQuotePdf(bytes));
+    expect((await saveInvoicePdf(companyId, 'd1', bytes)).hash).toBe(hashPdf(bytes));
+    expect((await saveCancellationPdf(companyId, 'd1', bytes)).hash).toBe(hashPdf(bytes));
   });
 });

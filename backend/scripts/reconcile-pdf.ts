@@ -8,6 +8,7 @@ import { hashSnapshot } from '../../shared/documents/snapshot.js';
 import { renderDocumentPdf, renderQuotePdf } from '../src/quotes/pdf.js';
 import {
   hashPdf,
+  hashQuotePdf,
   readCancellationPdf,
   readInvoicePdf,
   readQuotePdf,
@@ -30,7 +31,7 @@ async function quoteNeedsRepair(
   if (!pdfHash) return true;
   try {
     const bytes = await readQuotePdf(companyId, quoteId);
-    return hashPdf(bytes) !== pdfHash;
+    return hashQuotePdf(bytes) !== pdfHash;
   } catch {
     return true;
   }
