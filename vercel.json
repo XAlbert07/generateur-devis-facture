@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://REMPLACER-PAR-TON-SERVICE.onrender.com/api/:path*"
+      "destination": "https://devis-facture-api.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",
