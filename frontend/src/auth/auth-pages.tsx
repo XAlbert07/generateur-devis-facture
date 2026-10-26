@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router';
 import { z } from 'zod';
 import { ApiError, apiRequest } from '../api/http';
 import { useAuth } from './auth-context';
+import { SandboxEntry } from './sandbox-entry';
 
 const loginSchema = z.object({ email: z.string().trim().email('Adresse e-mail invalide.'), password: z.string().min(1, 'Saisis ton mot de passe.') });
 const registerSchema = z.object({
@@ -56,6 +57,7 @@ export function LoginPage() {
       <button className="button-primary" disabled={isSubmitting}>{isSubmitting ? 'Connexion…' : 'Se connecter'}<span aria-hidden="true">→</span></button>
     </form>
     <p className="auth-switch">Pas encore de compte ? <Link to="/register">Créer mon espace</Link></p>
+    <SandboxEntry />
   </AuthFrame>;
 }
 

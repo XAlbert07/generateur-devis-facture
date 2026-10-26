@@ -124,6 +124,12 @@ model Company {
   paymentDetails    Json?               @map("coordonnees_reglement")
   language          String              @default("fr") @map("langue") @db.VarChar(5)
   version           Int                 @default(1)
+  /// Renseigné uniquement pour un espace d’essai (démo) : date après laquelle il est purgé.
+  sandboxExpiresAt  DateTime?           @map("sandbox_expires_at") @db.Timestamptz(6)
+  /// Espace d’essai entièrement rempli, donc proposable. Absent tant que la préparation n’est pas terminée.
+  sandboxReadyAt    DateTime?           @map("sandbox_ready_at") @db.Timestamptz(6)
+  /// Espace d’essai attribué à un visiteur. Absent tant qu’il attend dans le réservoir.
+  sandboxClaimedAt  DateTime?           @map("sandbox_claimed_at") @db.Timestamptz(6)
   memberships       CompanyMembership[]
   clients           Client[]
   products          Product[]
@@ -134,6 +140,7 @@ model Company {
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  @@index([sandboxExpiresAt])
   @@map("entreprise")
 }
 

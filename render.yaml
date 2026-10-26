@@ -28,3 +28,10 @@ services:
       # Le disque de Render gratuit est éphémère : PDF et logos vont dans PostgreSQL.
       - key: DOCUMENTS_STORAGE
         value: database
+      # Bouton « Essayer la démo » : un clic ouvre un espace d'essai rempli de données fictives,
+      # supprimé automatiquement. Supprimer cette variable pour désactiver la démo.
+      # Réglages facultatifs : SANDBOX_TTL_HOURS (12), SANDBOX_MAX_ACTIVE (30),
+      # SANDBOX_MAX_PER_IP_PER_HOUR (3), SANDBOX_POOL_SIZE (2 espaces préparés d'avance).
+      - key: SANDBOX_ENABLED
+        value: true
+

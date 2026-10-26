@@ -11,6 +11,7 @@ import { healthRouter } from './health/routes.js';
 import { requestLogging, logError } from './http/logger.js';
 import { problem } from './http/problem.js';
 import { securityHeaders } from './http/security.js';
+import { sandboxRouter } from './sandbox/routes.js';
 
 export function createApp() {
   const app = express();
@@ -19,6 +20,8 @@ export function createApp() {
   app.use(requestLogging);
   app.use(securityHeaders);
   app.use(express.json({ limit: '1mb' }));
+  // Public et sans cookie (comme l'inscription) : monté avant la protection CSRF.
+  app.use('/api/v1/sandbox', sandboxRouter);
   app.use('/api/v1', requireCsrf);
 
   app.use('/api/v1', healthRouter);

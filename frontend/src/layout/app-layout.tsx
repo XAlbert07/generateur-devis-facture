@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate, Link } from 'react-router';
 import { useAuth } from '../auth/auth-context';
+import { SandboxBanner } from './sandbox-banner';
 
 const navigation = [
   { to: '/', label: 'Vue d’ensemble', short: 'Accueil', end: true },
@@ -32,7 +33,7 @@ export function AppLayout() {
         </button>
       </div>
     </aside>
-    <main className="app-main"><div className="mobile-top"><span className="brand-mark" aria-hidden="true">D</span><b>{session?.company.name}</b><button type="button" onClick={signOut} aria-label="Se déconnecter">↗</button></div>
+    <main className="app-main"><SandboxBanner /><div className="mobile-top"><span className="brand-mark" aria-hidden="true">D</span><b>{session?.company.name}</b><button type="button" onClick={signOut} aria-label="Se déconnecter">↗</button></div>
       <nav className="mobile-nav" aria-label="Navigation principale">{navigation.map(({ to, label, short, end }) =>
         <NavLink key={to} to={to} end={end} className={({ isActive }) => `mobile-nav-item${isActive ? ' active' : ''}`}><span aria-hidden="true">{navSymbol(to)}</span>{short ?? label}</NavLink>)}
       </nav><Outlet /></main>
