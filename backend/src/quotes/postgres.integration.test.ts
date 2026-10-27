@@ -62,6 +62,7 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
       await prisma.invoice.deleteMany({ where: { companyId } });
       await prisma.quote.deleteMany({ where: { companyId } });
       await prisma.documentSequence.deleteMany({ where: { companyId } });
+      await prisma.product.deleteMany({ where: { companyId } });
       await prisma.client.deleteMany({ where: { companyId } });
       await prisma.companyMembership.deleteMany({ where: { companyId } });
       await prisma.company.delete({ where: { id: companyId } });
@@ -120,10 +121,21 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     const expiringSend = await fetch(`${apiUrl}/quotes/${expiring.id}/send`, { method: 'POST', headers: { ...headers, 'If-Match': `"${expiring.version}"` } });
     const sentExpiring = await expiringSend.json() as { version: number };
     const yesterday = new Date(Date.now() - 86_400_000);
-    await prisma.quote.update({ where: { id: expiring.id }, data: { validUntil: new Date(Date.UTC(yesterday.getUTCFullYear(), yesterday.getUTCMonth(), yesterday.getUTCDate())) } });
+    // Un devis envoyé est figé par un déclencheur PostgreSQL, date de validité comprise. Pour simuler
+    // le passage du temps, on suspend ce déclencheur le temps d'une seule écriture, puis on le rétablit.
+    await prisma.$executeRawUnsafe('ALTER TABLE "devis" DISABLE TRIGGER devis_immutability');
+    try {
+      await prisma.quote.update({ where: { id: expiring.id }, data: { validUntil: new Date(Date.UTC(yesterday.getUTCFullYear(), yesterday.getUTCMonth(), yesterday.getUTCDate())) } });
+    } finally {
+      await prisma.$executeRawUnsafe('ALTER TABLE "devis" ENABLE TRIGGER devis_immutability');
+    }
     const expiredAcceptance = await fetch(`${apiUrl}/quotes/${expiring.id}/accept`, { method: 'POST', headers: { ...headers, 'If-Match': `"${sentExpiring.version}"` }, body: JSON.stringify({ acceptanceDate: today }) });
-    expect(expiredAcceptance.status).toBe(409);
-    expect((await prisma.quote.findUniqueOrThrow({ where: { id: expiring.id } })).status).toBe('EXPIRE');
+    // Accepter après la date de validité est une erreur de saisie (la date d'acceptation doit être au plus la date de validité).
+    expect(expiredAcceptance.status).toBe(422);
+    // « Expiré » est un état dérivé à la lecture : le statut stocké reste ENVOYE, l'API répond EXPIRE.
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: expiring.id } })).status).toBe('ENVOYE');
+    const expiredView = await (await fetch(`${apiUrl}/quotes/${expiring.id}`, { headers })).json() as { status: string };
+    expect(expiredView.status).toBe('EXPIRE');
 
     const cancellationDraftResponse = await fetch(`${apiUrl}/quotes`, { method: 'POST', headers, body: JSON.stringify({
       clientId, validUntil, lines: [{ description: 'Devis à annuler', quantityMilli: '1000', unitPrice: '900', taxRateBasisPts: 0 }],
@@ -407,7 +419,9 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     const validUntil = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
     const today = new Date().toISOString().slice(0, 10);
 
-    // -- Devis : send, accept, refuse, cancel, convert cross-tenant -> 404 ---
+    // -- Devis : send, accept, refuse, cancel, convert cross-tenant -> 409 ---
+    // Réponse volontairement identique à « transition interdite ou version obsolète » (le message
+    // dit « ou devis introuvable ») : une autre entreprise ne doit pas pouvoir deviner qu'un devis existe.
     const quoteResp = await fetch(`${apiUrl}/quotes`, {
       method: 'POST', headers,
       body: JSON.stringify({ clientId, validUntil, lines: [{ description: 'Isolation mutations', quantityMilli: '1000', unitPrice: '800', taxRateBasisPts: 0 }] }),
@@ -417,7 +431,7 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
 
     expect((await fetch(`${apiUrl}/quotes/${quote.id}/send`, {
       method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${quote.version}"` },
-    })).status).toBe(404);
+    })).status).toBe(409);
 
     const sentResp = await fetch(`${apiUrl}/quotes/${quote.id}/send`, {
       method: 'POST', headers: { ...headers, 'If-Match': `"${quote.version}"` },
@@ -428,14 +442,14 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     expect((await fetch(`${apiUrl}/quotes/${quote.id}/accept`, {
       method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${sentQuote.version}"` },
       body: JSON.stringify({ acceptanceDate: today }),
-    })).status).toBe(404);
+    })).status).toBe(409);
     expect((await fetch(`${apiUrl}/quotes/${quote.id}/refuse`, {
       method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${sentQuote.version}"` },
-    })).status).toBe(404);
+    })).status).toBe(409);
     expect((await fetch(`${apiUrl}/quotes/${quote.id}/cancel`, {
       method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${sentQuote.version}"` },
       body: JSON.stringify({ reason: 'Tentative cross-tenant' }),
-    })).status).toBe(404);
+    })).status).toBe(409);
 
     const acceptedResp = await fetch(`${apiUrl}/quotes/${quote.id}/accept`, {
       method: 'POST', headers: { ...headers, 'If-Match': `"${sentQuote.version}"` },
@@ -446,9 +460,9 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
 
     expect((await fetch(`${apiUrl}/quotes/${quote.id}/convert`, {
       method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${acceptedQuote.version}"` },
-    })).status).toBe(404);
+    })).status).toBe(409);
 
-    // -- Facture brouillon : PUT, DELETE, issue cross-tenant -> 404 -----------
+    // -- Facture brouillon : PUT, DELETE, issue cross-tenant -> 409 (même réponse uniforme que pour les devis) -----------
     const invoiceResp = await fetch(`${apiUrl}/invoices`, {
       method: 'POST', headers,
       body: JSON.stringify({ clientId, lines: [{ description: 'Isolation facture', quantityMilli: '1000', unitPrice: '1200', taxRateBasisPts: 0 }] }),
@@ -456,16 +470,20 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     expect(invoiceResp.status).toBe(201);
     const draftInvoice = await invoiceResp.json() as { id: string; version: number };
 
+    // Le corps référence un client de l'autre entreprise : c'est bien la facture, et non le client, qui est refusée.
+    const otherClient = await (await fetch(`${apiUrl}/clients`, {
+      method: 'POST', headers: otherHeaders, body: JSON.stringify({ name: 'Client de l’autre entreprise' }),
+    })).json() as { id: string };
     expect((await fetch(`${apiUrl}/invoices/${draftInvoice.id}`, {
       method: 'PUT', headers: { ...otherHeaders, 'If-Match': `"${draftInvoice.version}"` },
-      body: JSON.stringify({ clientId, lines: [{ description: 'Pirate', quantityMilli: '1000', unitPrice: '1', taxRateBasisPts: 0 }] }),
-    })).status).toBe(404);
+      body: JSON.stringify({ clientId: otherClient.id, lines: [{ description: 'Pirate', quantityMilli: '1000', unitPrice: '1', taxRateBasisPts: 0 }] }),
+    })).status).toBe(409);
     expect((await fetch(`${apiUrl}/invoices/${draftInvoice.id}`, {
       method: 'DELETE', headers: { ...otherHeaders, 'If-Match': `"${draftInvoice.version}"` },
-    })).status).toBe(404);
+    })).status).toBe(409);
     expect((await fetch(`${apiUrl}/invoices/${draftInvoice.id}/issue`, {
       method: 'POST', headers: { ...otherHeaders, 'If-Match': `"${draftInvoice.version}"` },
-    })).status).toBe(404);
+    })).status).toBe(409);
 
     // Emettre la facture pour tester cancel cross-tenant
     const issuedResp = await fetch(`${apiUrl}/invoices/${draftInvoice.id}/issue`, {
@@ -497,11 +515,11 @@ describe.skipIf(!enabled)('parcours devis PostgreSQL', () => {
     const ourBefore = await (await fetch(`${apiUrl}/company`, { headers })).json() as { name: string };
     const nameBefore = ourBefore.name;
     const otherCompanyGet = await fetch(`${apiUrl}/company`, { headers: otherHeaders });
-    const otherCompanyData = await otherCompanyGet.json() as { version: number };
+    const otherCompanyData = await otherCompanyGet.json() as { version: number } & Record<string, unknown>;
     const otherPut = await fetch(`${apiUrl}/company`, {
       method: 'PUT',
       headers: { ...otherHeaders, 'If-Match': `"${otherCompanyData.version}"` },
-      body: JSON.stringify({ name: 'Autre modifiee', currency: 'EUR', decimals: 2, defaultTaxRateBasisPts: 0, timezone: 'UTC', paymentDelayDays: 30 }),
+      body: JSON.stringify({ ...otherCompanyData, name: 'Autre modifiee', currency: 'EUR', decimals: 2, defaultTaxRateBasisPts: 0, timezone: 'UTC', paymentDelayDays: 30 }),
     });
     expect(otherPut.status).toBe(200);
     const ourAfter = await (await fetch(`${apiUrl}/company`, { headers })).json() as { name: string };
