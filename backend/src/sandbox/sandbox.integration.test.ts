@@ -144,6 +144,15 @@ describe.skipIf(!enabled)('espaces d’essai sous PostgreSQL', () => {
       expect(Buffer.from(await invoicePdf.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-');
     });
 
+    it('inscrit la date d’envoi dans l’instantané figé des devis envoyés (donc dans leur PDF)', async () => {
+      const sent = await prisma.quote.findMany({ where: { companyId: first.body.company.id, sentAt: { not: null } }, select: { sentAt: true, snapshot: true } });
+      expect(sent.length).toBeGreaterThan(0);
+      for (const quote of sent) {
+        const snapshot = quote.snapshot as { quote: { sentAt?: string } };
+        expect(snapshot.quote.sentAt).toBe(quote.sentAt!.toISOString());
+      }
+    });
+
     it('est signalé comme espace d’essai avec une date d’expiration', async () => {
       const session = await (await get(first.cookie, '/sandbox/session')).json() as { sandbox: boolean; expiresAt: string };
       expect(session.sandbox).toBe(true);

@@ -270,8 +270,9 @@ export async function renderDocumentPdf(value: unknown, options: RenderPdfOption
     doc.moveDown(0.8);
     const totalLine = (label: string, amount: unknown, bold = false) => {
       doc.font(bold ? FONT_BOLD : FONT_REGULAR).fontSize(bold ? 12 : 10).fillColor('#0f172a');
-      doc.text(label, 270, doc.y, { width: 170 });
-      doc.text(money(amount, currency, decimals), 440, doc.y, { width: 107, align: 'right' });
+      const rowY = doc.y; // même ordonnée pour le libellé et le montant (doc.y avance après chaque text())
+      doc.text(label, 270, rowY, { width: 170 });
+      doc.text(money(amount, currency, decimals), 440, rowY, { width: 107, align: 'right' });
       doc.moveDown(0.7);
     };
     totalLine('Sous-total HT', quote.subtotalExclTax);
@@ -299,12 +300,12 @@ export async function renderDocumentPdf(value: unknown, options: RenderPdfOption
   const section = (title: string, lines: string[], fontSize = 9) => {
     if (!lines.length) return;
     if (doc.y > 720) doc.addPage();
-    doc.moveDown(0.4).fillColor('#172554').font(FONT_BOLD).fontSize(9).text(title, { width: 499 });
+    doc.moveDown(0.4).fillColor('#172554').font(FONT_BOLD).fontSize(9).text(title, 48, undefined, { width: 499 });
     for (const line of lines) {
       doc.fillColor('#475569').font(FONT_REGULAR).fontSize(fontSize);
       const height = doc.heightOfString(line, { width: 499 });
       if (doc.y + height > 760) doc.addPage();
-      doc.text(line, { width: 499 });
+      doc.text(line, 48, undefined, { width: 499 });
     }
   };
   if (company.paymentTerms) section('CONDITIONS DE PAIEMENT', [text(company.paymentTerms)]);

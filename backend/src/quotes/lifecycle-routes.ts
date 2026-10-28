@@ -44,9 +44,10 @@ export async function sendQuote(request: Request, response: Response): Promise<v
     });
     const number = `${current.company.quotePrefix ?? 'DEV'}-${year}-${String(sequence.lastNumber).padStart(5, '0')}`;
     const { company, client, ...document } = current;
-    const frozen = quoteSnapshot({ ...document, number, status: 'ENVOYE' }, company, client);
+    const sentAt = new Date(); // même date dans l'instantané figé (donc dans le PDF) et sur le devis
+    const frozen = quoteSnapshot({ ...document, number, status: 'ENVOYE', sentAt }, company, client);
     const changed = await tx.quote.updateMany({ where: { id: current.id, version, status: 'BROUILLON' }, data: {
-      number, status: 'ENVOYE', sentAt: new Date(), snapshot: frozen.snapshot as never,
+      number, status: 'ENVOYE', sentAt, snapshot: frozen.snapshot as never,
       snapshotVersion: 1, snapshotHash: frozen.hash, version: { increment: 1 },
     } });
     if (!changed.count) return null;
